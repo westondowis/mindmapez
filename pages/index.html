@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="./" />
+    <title>MindMesh</title>
+    <meta name="theme-color" content="#00171c" />
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600&family=Fraunces:opsz,wght@9..144,560&display=swap" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>MindMesh</h1>
+        <p class="muted status" id="status"></p>
+      </div>
+      <button type="button" id="open-settings">GitHub</button>
+    </header>
+    <main id="app"></main>
+    <footer class="muted">Notes save in this browser, then to <code>data/app_data.json</code> when a token is set.</footer>
+    <dialog id="settings">
+      <form method="dialog">
+        <h2 style="font-family:Fraunces,serif;margin:0">GitHub storage</h2>
+        <p class="muted">Fine-grained token, Contents read and write, one repository. Stored only in this browser.</p>
+        <label>Owner<input id="owner" name="owner" autocomplete="off" required /></label>
+        <label>Repository<input id="repo" name="repo" autocomplete="off" required /></label>
+        <label>Branch<input id="branch" name="branch" value="main" autocomplete="off" /></label>
+        <label>Personal access token<input id="token" name="token" type="password" autocomplete="off" required /></label>
+        <div class="row" style="margin-top:0.9rem">
+          <button class="primary" type="submit" value="save">Save and load</button>
+          <button type="button" id="forget">Forget token</button>
+          <button type="button" id="close-settings">Close</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

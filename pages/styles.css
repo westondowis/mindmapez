@@ -1,0 +1,59 @@
+:root {
+  color-scheme: dark;
+  --bg: #00171c;
+  --card: #04262d;
+  --line: rgb(136 187 216 / 28%);
+  --text: #e7f4f8;
+  --muted: #8eb4c4;
+  --blue: #88bbd8;
+  --gold: #f9c54b;
+  font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+button, [role="button"] { cursor: pointer; }
+body { min-height: 100dvh; }
+header, main, footer { width: min(880px, calc(100% - 1.5rem)); margin-inline: auto; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 1rem 0; }
+h1 { font-family: Fraunces, Georgia, serif; font-size: 1.6rem; margin: 0; font-weight: 560; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+button, .btn {
+  border: 1px solid var(--line);
+  background: #06343c;
+  color: var(--text);
+  border-radius: 999px;
+  min-height: 44px;
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+}
+button.primary { background: var(--blue); color: #042028; border-color: transparent; font-weight: 650; }
+button.gold { background: var(--gold); color: #2a2208; border-color: transparent; font-weight: 650; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; }
+.card, .sector, .branch, dialog {
+  background: color-mix(in oklab, var(--card) 92%, black);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+.sector, .branch { padding: 0.9rem; text-align: left; width: 100%; }
+.sector strong, .branch strong { display: block; }
+.kicker { color: var(--gold); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; }
+dialog { color: var(--text); width: min(440px, calc(100% - 1.5rem)); padding: 1rem; }
+dialog::backdrop { background: rgb(0 0 0 / 55%); }
+label { display: grid; gap: 0.25rem; font-size: 0.78rem; color: var(--muted); margin-top: 0.6rem; }
+input, textarea {
+  width: 100%;
+  border-radius: 0.7rem;
+  border: 1px solid var(--line);
+  background: #012229;
+  color: var(--text);
+  font: inherit;
+  padding: 0.65rem 0.75rem;
+}
+textarea { min-height: 5.5rem; }
+.tabs { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.3rem; }
+.tabs button { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs button[aria-selected="true"] { background: var(--blue); color: #042028; }
+.memory { white-space: pre-wrap; line-height: 1.45; }
+.status { min-height: 1.2rem; }
+footer { padding: 1.5rem 0 2rem; }

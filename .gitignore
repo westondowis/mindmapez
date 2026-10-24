@@ -1,0 +1,16 @@
+node_modules
+dist
+.output
+.nitro
+.vinxi
+.tanstack
+.grok
+screenshots
+artifacts
+attachments
+*.log
+.DS_Store
+.env
+.env.*
+.project_id
+.node_modules.lock

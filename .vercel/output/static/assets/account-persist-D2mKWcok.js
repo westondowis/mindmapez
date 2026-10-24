@@ -1,0 +1,1 @@
+var e=new Set,t=!1,n=null;function r(){t=!0}function i(t){return e.add(t),()=>{e.delete(t)}}async function a(r){if(!t&&r!==`logout`||n&&(await n,!t&&r!==`logout`))return;t=!1;let i=(async()=>{for(let t of[...e])try{await t(r)}catch{}})();n=i;try{await i}finally{n===i&&(n=null)}}export{r as n,i as r,a as t};

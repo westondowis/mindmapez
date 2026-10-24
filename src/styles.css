@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --color-background: #00171c;
+  --color-foreground: #edf5fa;
+  --color-card: #042a32;
+  --color-primary: #88bbd8;
+  --color-primary-foreground: #00171c;
+  --color-secondary: #0c3a44;
+  --color-secondary-foreground: #d5e8f0;
+  --color-muted: #0c3a44;
+  --color-muted-foreground: #8eb4c6;
+  --color-accent: #123f4a;
+  --color-accent-foreground: #edf5fa;
+  --color-highlight: #f9c54b;
+  --color-highlight-foreground: #1a1404;
+  --color-destructive: #e06b6b;
+  --color-destructive-foreground: #1a0808;
+  --color-border: rgb(136 187 216 / 22%);
+  --color-input: rgb(136 187 216 / 28%);
+  --color-ring: #88bbd8;
+  --color-learning: #7eb6ff;
+  --color-success: #5dcaa5;
+  --color-problem: #e07a8a;
+  --color-idea: #b48cff;
+  --color-archived: #7d8b94;
+  --color-gold: #f9c54b;
+  --shadow-soft: 0 18px 50px rgb(0 0 0 / 35%);
+}
+
+@layer base {
+  html,
+  body {
+    min-height: 100%;
+  }
+  body {
+    overflow-x: hidden;
+    font-family: var(--font-sans);
+  }
+}
+
+.mesh-field {
+  background:
+    radial-gradient(1100px 540px at 50% -10%, rgb(136 187 216 / 18%), transparent 55%),
+    #00171c url("/mesh-bg.jpg") center / cover no-repeat;
+}
+
+.dot-grid {
+  background-image: radial-gradient(rgb(136 187 216 / 28%) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse at center, black, transparent 78%);
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.92); opacity: 0.65; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+@keyframes me-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+.animate-me-breathe {
+  animation: me-breathe 3.6s ease-in-out infinite;
+}
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(249 197 75 / 0%); }
+  50% { box-shadow: 0 0 18px rgb(249 197 75 / 45%); }
+}
+.animate-node-pulse {
+  animation: node-pulse 1.8s ease-in-out infinite;
+}
+
+.brain-depth .react-flow__viewport {
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mindmesh-flow {
+  touch-action: none;
+  background: transparent;
+}
+.mindmesh-flow .react-flow__attribution {
+  background: transparent;
+  color: rgb(136 187 216 / 40%);
+  font-size: 9px;
+}
+.mindmesh-flow .react-flow__controls {
+  border: 1px solid rgb(136 187 216 / 16%);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: none;
+  background: rgb(4 42 50 / 88%);
+}
+.mindmesh-flow .react-flow__controls-button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgb(136 187 216 / 12%);
+  fill: #88bbd8;
+  width: 36px;
+  height: 36px;
+}
+.mindmesh-flow .react-flow__controls-button:hover {
+  background: rgb(136 187 216 / 10%);
+}
+.mindmesh-flow .react-flow__minimap {
+  background: rgb(0 23 28 / 78%);
+  border: 1px solid rgb(136 187 216 / 14%);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.mindmesh-flow .react-flow__edge-path {
+  stroke-linecap: round;
+}
+.mindmesh-flow .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+.mindmesh-flow .react-flow__node {
+  cursor: pointer;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.brain-stage {
+  touch-action: none;
+  cursor: grab;
+}
+.brain-stage:active {
+  cursor: grabbing;
+}
+.brain-tilt {
+  transform-style: preserve-3d;
+  perspective: 900px;
+}
+.brain-ctrl {
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(136 187 216 / 28%);
+  background: rgb(4 42 50 / 88%);
+  color: var(--color-foreground);
+  backdrop-filter: blur(10px);
+}
+.brain-ctrl:hover {
+  border-color: var(--color-primary);
+}
+.brain-spotlight {
+  animation: brain-spot 1.4s ease-in-out infinite;
+}
+@keyframes brain-spot {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(249 197 75 / 0%); }
+  50% { box-shadow: 0 0 0 6px rgb(249 197 75 / 28%), 0 0 24px rgb(249 197 75 / 45%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-ring,
+  .animate-node-pulse,
+  .animate-me-breathe,
+  .brain-spotlight {
+    animation: none;
+  }
+  .brain-depth .react-flow__viewport {
+    transition: none;
+  }
+}
