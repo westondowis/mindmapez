@@ -12,5 +12,6 @@ attachments
 .DS_Store
 .env
 .env.*
+.vercel
 .project_id
 .node_modules.lock
