@@ -20,6 +20,28 @@ function sectorPoint(sector: BrainSector, radius = 1.02) {
   );
 }
 
+/** Anatomy-model categories that dangle below the brain and are not part of it. */
+const STRAY_CATEGORIES = new Set(["cranial_nerves", "arteries"]);
+
+/**
+ * Pin a sector marker to the real brain surface: cast a ray from outside toward
+ * the centre along the sector's direction and sit just above the first hit.
+ * Falls back to the fitted ellipsoid when the ray misses.
+ * @param {THREE.Object3D} model Fitted brain (world matrices already updated).
+ * @param {THREE.Vector3} dir Direction from the brain centre (any length).
+ * @param {THREE.Vector3} radii Half-extents of the fitted brain.
+ * @returns {THREE.Vector3} Marker position in brain space.
+ */
+function snapToSurface(model: THREE.Object3D, dir: THREE.Vector3, radii: THREE.Vector3) {
+  const d = dir.clone().normalize();
+  const fallback = d.clone().multiply(radii).multiplyScalar(1.04);
+  if (!Number.isFinite(d.x + d.y + d.z)) return fallback;
+  const ray = new THREE.Raycaster(d.clone().multiplyScalar(4), d.clone().negate(), 0, 8);
+  const hit = ray.intersectObject(model, true)[0];
+  if (!hit) return fallback;
+  return hit.point.clone().add(d.multiplyScalar(0.04));
+}
+
 function useReducedMotion() {
   const [reduced, setReduced] = useState(false);
   useEffect(() => {
@@ -66,22 +88,42 @@ function SurfaceMotion({ map, reduced }: { map: THREE.CanvasTexture; reduced: bo
 }
 
 
-function boltPoints() {
+/**
+ * One lightning arc hugging the brain: a random walk over the unit sphere,
+ * stretched onto the brain's own half-axes so the arc rides just above the
+ * surface instead of floating around it.
+ * @param {THREE.Vector3} radii Half-extents of the fitted brain (x, y, z).
+ * @returns {THREE.Vector3[]} Polyline points in brain space.
+ */
+function boltPoints(radii: THREE.Vector3) {
   const pts: THREE.Vector3[] = [];
-  let p = new THREE.Vector3().randomDirection().multiplyScalar(0.9);
+  let dir = new THREE.Vector3().randomDirection();
   const steps = 5 + Math.floor(Math.random() * 7);
   for (let i = 0; i < steps; i++) {
-    pts.push(p.clone());
-    const jitter = new THREE.Vector3().randomDirection().multiplyScalar(0.09);
-    p = p.clone().add(jitter).normalize().multiplyScalar(0.88 + Math.random() * 0.16);
+    const lift = 1.03 + Math.random() * 0.1;
+    pts.push(dir.clone().multiply(radii).multiplyScalar(lift));
+    const jitter = new THREE.Vector3().randomDirection().multiplyScalar(0.16);
+    dir = dir.clone().add(jitter).normalize();
   }
   return pts;
 }
 
-function Lightning({ reduced }: { reduced: boolean }) {
+function Lightning({ reduced, radii }: { reduced: boolean; radii: THREE.Vector3 }) {
   const group = useRef<THREE.Group>(null);
   const lines = useRef<THREE.Line[]>([]);
   const next = useRef(0);
+  useEffect(() => {
+    const g = group.current;
+    return () => {
+      // Free GPU resources when the brain unmounts.
+      lines.current.forEach((l) => {
+        l.geometry.dispose();
+        (l.material as THREE.Material).dispose();
+        g?.remove(l);
+      });
+      lines.current = [];
+    };
+  }, []);
   useFrame(({ clock }) => {
     if (reduced || !group.current) return;
     if (clock.elapsedTime < next.current && lines.current.length) return;
@@ -94,7 +136,7 @@ function Lightning({ reduced }: { reduced: boolean }) {
     const count = 10 + Math.floor(Math.random() * 6);
     const fresh: THREE.Line[] = [];
     for (let i = 0; i < count; i++) {
-      const geo = new THREE.BufferGeometry().setFromPoints(boltPoints());
+      const geo = new THREE.BufferGeometry().setFromPoints(boltPoints(radii));
       const mat = new THREE.LineBasicMaterial({
         color: Math.random() > 0.3 ? "#e8a0ff" : "#c9b6ff",
         transparent: false,
@@ -127,8 +169,17 @@ function BrainModel({
 }) {
   const [hover, setHover] = useState<string | null>(null);
   const gltf = useGLTF("/brain.glb", "/draco/");
-  const fitted = useMemo(() => {
+  const { fitted, radii } = useMemo(() => {
     const root = gltf.scene.clone(true);
+    // The anatomy model also holds cranial nerves and arteries that trail far
+    // down the neck (0.56 tall vs 0.18 for the brain). Measuring them shrank the
+    // brain ~3x and dragged its centre off, so drop them before fitting.
+    const stray: THREE.Object3D[] = [];
+    root.traverse((obj) => {
+      if (STRAY_CATEGORIES.has(String(obj.userData?.bx_cat ?? ""))) stray.push(obj);
+    });
+    stray.forEach((obj) => obj.removeFromParent());
+    root.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -136,6 +187,8 @@ function BrainModel({
     const scale = 1.7 / maxDim;
     root.scale.setScalar(scale);
     root.position.copy(center).multiplyScalar(-scale);
+    root.updateMatrixWorld(true);
+    const half = size.clone().multiplyScalar(scale / 2);
     root.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -146,16 +199,19 @@ function BrainModel({
         const std = m as THREE.MeshStandardMaterial;
         if ("color" in std && std.color) std.color.set("#3a2458");
         if ("emissive" in std && std.emissive) std.emissive.set("#b44cff");
-        if ("emissiveIntensity" in std) std.emissiveIntensity = reduced ? 0.35 : 0.85;
+        if ("emissiveIntensity" in std) std.emissiveIntensity = reduced ? 0.3 : 0.55;
         if ("roughness" in std) std.roughness = 0.55;
         if ("metalness" in std) std.metalness = 0.12;
       };
       if (Array.isArray(mat)) mat.forEach(apply);
       else if (mat) apply(mat);
     });
-    return root;
+    return { fitted: root, radii: half };
   }, [gltf.scene, reduced]);
-  const points = useMemo(() => sectors.map((s) => ({ sector: s, pos: sectorPoint(s, 0.92) })), [sectors]);
+  const points = useMemo(
+    () => sectors.map((s) => ({ sector: s, pos: snapToSurface(fitted, sectorPoint(s, 1), radii) })),
+    [sectors, fitted, radii],
+  );
 
   function nearest(point: THREE.Vector3) {
     let best = points[0];
@@ -172,6 +228,7 @@ function BrainModel({
 
   return (
     <group>
+      <Lightning reduced={reduced} radii={radii} />
       <primitive
         object={fitted}
         onClick={(e: { stopPropagation: () => void; point: THREE.Vector3 }) => {
@@ -197,7 +254,7 @@ function BrainModel({
               onPointerOver={() => { setHover(sector.id); onHover?.(sector.id); }}
               onPointerOut={() => { setHover(null); onHover?.(null); }}
             >
-              <sphereGeometry args={[hot ? 0.11 : 0.07, 16, 16]} />
+              <sphereGeometry args={[hot ? 0.075 : 0.05, 16, 16]} />
               <meshBasicMaterial color={hot ? "#f9c54b" : "#6ee7ff"} />
             </mesh>
 
@@ -206,6 +263,30 @@ function BrainModel({
       })}
     </group>
   );
+}
+
+/** Half the brain's fitted width plus breathing room. */
+const FIT_HALF_WIDTH = 0.76;
+
+/**
+ * Keep the whole brain in frame on narrow (portrait) screens. The home distance
+ * was fixed for a landscape viewport, which cropped the brain on phones. Only
+ * ever pushes the camera back, so it never overrides a user's own zoom-in.
+ * @param {MutableRefObject<number>} homeDist Receives the aspect-aware home distance.
+ */
+function FitCamera({ homeDist }: { homeDist: MutableRefObject<number> }) {
+  const { camera, size } = useThree();
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    if (!cam.isPerspectiveCamera || !size.width || !size.height) return;
+    const aspect = size.width / size.height;
+    const halfFov = THREE.MathUtils.degToRad(cam.fov / 2);
+    const needed = FIT_HALF_WIDTH / (Math.tan(halfFov) * aspect);
+    const dist = THREE.MathUtils.clamp(Math.max(HOME.length(), needed), MIN_DIST, MAX_DIST);
+    homeDist.current = dist;
+    if (cam.position.length() < dist) cam.position.setLength(dist);
+  }, [camera, size.width, size.height, homeDist]);
+  return null;
 }
 
 function CameraRig({
@@ -269,6 +350,7 @@ export function BrainOverview({
 }) {
   const reduced = useReducedMotion();
   const controls = useRef<any>(null);
+  const homeDist = useRef(HOME.length());
   const [fly, setFly] = useState<BrainSectorId | null>(null);
   const [hovered, setHovered] = useState<BrainSectorId | null>(null);
   const pending = useRef<BrainSectorId | null>(null);
@@ -305,7 +387,7 @@ export function BrainOverview({
   function reset() {
     const c = controls.current;
     if (!c) return;
-    c.object.position.copy(HOME);
+    c.object.position.copy(HOME).setLength(homeDist.current);
     c.target.set(0, 0, 0);
     c.update();
     setFly(null);
@@ -322,8 +404,8 @@ export function BrainOverview({
         <pointLight position={[2.4, 1.6, 2.2]} intensity={40} color="#e8c6ff" />
         <pointLight position={[-2.2, -0.4, 1.4]} intensity={8} color="#3aa0ff" />
         <Stars radius={40} depth={20} count={reduced ? 200 : 900} factor={2} fade speed={reduced ? 0 : 0.4} />
-        <Lightning reduced={reduced} />
         <BrainModel sectors={sectors} concepts={concepts} spotlightId={spotlightId} reduced={reduced} onPick={pick} onHover={setHovered} />
+        <FitCamera homeDist={homeDist} />
         <CameraRig target={flyTarget} reduced={reduced} controls={controls} onArrive={arrive} />
         <OrbitControls
           ref={controls}
