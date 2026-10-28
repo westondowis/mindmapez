@@ -32,6 +32,8 @@ export type MemoryNodeData = {
   dimmed?: boolean;
   emoji?: string | null;
   color?: string | null;
+  synapse?: boolean;
+  contentLength?: number;
   expanded?: boolean;
   onEdit?: () => void;
   onDismiss?: () => void;
@@ -124,30 +126,63 @@ export function ConceptNode({ data }: NodeProps) {
   );
 }
 
+const MIN_SYNAPSE = 72;
+const MAX_SYNAPSE = 210;
+function synapseWidth(chars = 0) {
+  const f = Math.log10(Math.max(chars, 12));
+  return Math.min(MAX_SYNAPSE, Math.max(MIN_SYNAPSE, MIN_SYNAPSE + (f - 1) * 52));
+}
+
+function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
+  const width = synapseWidth(chars);
+  const beads = Math.max(3, Math.round((width - 52) / 16));
+  const axonEnd = 38 + beads * 14;
+  return (
+    <svg viewBox={`0 0 ${width} 56`} width={width * 0.78} height="44" aria-hidden className={glow ? "drop-shadow-[0_0_8px_#88bbd8]" : ""}>
+      <g fill="none" stroke="#88bbd8" strokeWidth="1.4" strokeLinecap="round">
+        <path d="M22 28 C10 12 6 8 4 4" />
+        <path d="M22 28 C8 18 4 16 2 14" />
+        <path d="M22 28 C6 28 3 30 1 32" />
+        <path d="M22 28 C10 38 6 44 4 50" />
+        <path d="M22 28 C16 42 14 50 12 54" />
+      </g>
+      <circle className="synapse-soma" cx="28" cy="28" r="13" fill="#1a3a8a" stroke="#88bbd8" strokeWidth="1.6" />
+      <circle cx="28" cy="28" r="5.5" fill="#c9b6ff" opacity="0.9" />
+      <path className="synapse-axon" d={`M41 28 H${axonEnd}`} stroke="#d46bff" strokeWidth="2.2" />
+      <g fill="#b44cff" stroke="#f0c4ff" strokeWidth="0.6">
+        {Array.from({ length: beads }, (_, i) => (
+          <rect key={i} x={46 + i * 14} y="22" width="10" height="12" rx="3" />
+        ))}
+      </g>
+      <circle className="synapse-pulse" r="3.5" fill="#fff" opacity="0.9">
+        <animateMotion dur="2.4s" repeatCount="indefinite" path={`M41 28 H${axonEnd}`} />
+      </circle>
+      <g fill="none" stroke="#d46bff" strokeWidth="1.3" strokeLinecap="round">
+        <path d={`M${axonEnd} 28 C${axonEnd + 6} 22 ${axonEnd + 8} 16 ${axonEnd + 10} 12`} />
+        <path d={`M${axonEnd} 28 C${axonEnd + 6} 28 ${axonEnd + 8} 28 ${axonEnd + 11} 28`} />
+        <path d={`M${axonEnd} 28 C${axonEnd + 6} 34 ${axonEnd + 8} 40 ${axonEnd + 10} 44`} />
+      </g>
+    </svg>
+  );
+}
+
 export function MemoryNode({ data }: NodeProps) {
   const d = data as MemoryNodeData;
-  const size = d.expanded ? 44 : Math.max(40, 32 + d.importance * 4);
   const color = d.color ? nodeColorCss(d.color) : KIND_COLOR[d.kind];
   const stop = (event: React.SyntheticEvent) => {
     event.stopPropagation();
   };
   return (
-    <div className={cn("relative flex flex-col items-center", d.dimmed && "opacity-20")}>
-      <Handle type="target" position={Position.Top} />
-      <Handle type="source" position={Position.Bottom} />
-      <div
-        className={cn("grid place-items-center rounded-full border", d.recent && "animate-node-pulse")}
-        style={{
-          width: size,
-          height: size,
-          background: color,
-          borderColor: "rgb(0 23 28 / 40%)",
-          boxShadow: d.glow
-            ? `0 0 ${10 + d.importance * 4}px ${color}`
-            : `0 0 10px color-mix(in oklab, ${color} 40%, transparent)`,
-        }}
-      >
-        {d.emoji ? <span className="text-base leading-none">{d.emoji}</span> : null}
+    <div className={cn("relative flex flex-col items-center", d.dimmed && "opacity-20", d.synapse && "synapse-node")}>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+      <div className={cn("relative", d.recent && "animate-node-pulse")}>
+        <SynapseMark glow={d.glow || d.recent || true} chars={d.contentLength} />
+        {d.emoji ? (
+          <span className="absolute left-[18px] top-[14px] text-[11px] leading-none" style={{ color }}>
+            {d.emoji}
+          </span>
+        ) : null}
       </div>
       {d.expanded ? (
         <div className="nodrag nopan mt-2 w-[min(72vw,240px)] rounded-xl border border-border bg-background/95 p-2.5 text-left shadow-soft">

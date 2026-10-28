@@ -58,6 +58,32 @@ function ring(index: number, total: number, radius: number, origin = { x: 0, y: 
   return { x: origin.x + Math.cos(angle) * radius, y: origin.y + Math.sin(angle) * radius };
 }
 
+function rowBelow(index: number, total: number, origin = { x: 0, y: 0 }, gap = 200, drop = 230) {
+  const span = Math.max(total, 1) - 1;
+  return { x: origin.x - (span * gap) / 2 + index * gap, y: origin.y + drop };
+}
+
+function layoutTree(concepts: Concept[], sectorId: string, focusId?: string | null) {
+  const positions = new Map<string, { x: number; y: number }>();
+  // When a branch is focused, only rearrange its direct children.
+  if (focusId && focusId !== sectorId) {
+    const kids = childrenOf(concepts, focusId);
+    kids.forEach((k, i) => positions.set(k.id, rowBelow(i, kids.length, { x: 0, y: 0 }, 190, 240)));
+    return positions;
+  }
+  const primaries = childrenOf(concepts, null, sectorId);
+  primaries.forEach((c, i) => {
+    positions.set(c.id, rowBelow(i, primaries.length, { x: 0, y: 0 }, 210, 250));
+  });
+  const place = (parentId: string) => {
+    const kids = childrenOf(concepts, parentId);
+    kids.forEach((k, i) => positions.set(k.id, rowBelow(i, kids.length, { x: 0, y: 0 }, 190, 240)));
+    kids.forEach((k) => place(k.id));
+  };
+  primaries.forEach((p) => place(p.id));
+  return positions;
+}
+
 function linkedTo(graph: GraphPayload, id: string, conceptId: string) {
   return graph.connections.some(
     (e) =>
@@ -115,7 +141,7 @@ function toTourElements(
     } else {
       pos = ring(i, visibleConcepts.length, 220);
     }
-    if (c.positionX != null && c.positionY != null && (hubOnly || showAll)) {
+    if (c.positionX != null && c.positionY != null) {
       pos = { x: c.positionX, y: c.positionY };
     }
     conceptPos.set(c.id, pos);
@@ -144,7 +170,7 @@ function toTourElements(
       const created = new Date(m.createdAt).getTime();
       const recent = now - created < 1000 * 60 * 60 * 36;
       const pos =
-        showAll && m.positionX != null && m.positionY != null
+        m.positionX != null && m.positionY != null
           ? { x: m.positionX, y: m.positionY }
           : showAll
             ? ring(i, memories.length, 520)
@@ -225,7 +251,7 @@ function toBranchElements(
       const pos =
         c.positionX != null && c.positionY != null
           ? { x: c.positionX, y: c.positionY }
-          : ring(i, primaries.length, 240);
+          : rowBelow(i, primaries.length, { x: 0, y: 10 }, 210, 250);
       const kids = childrenOf(graph.concepts, c.id);
       nodes.push({
         id: c.id,
@@ -253,33 +279,6 @@ function toBranchElements(
           strokeWidth: selectedId === c.id ? 2.6 : 1.6,
         },
       });
-      if (expanded.has(c.id)) {
-        kids.forEach((k, ki) => {
-          const kp = ring(ki, kids.length, 120, pos);
-          nodes.push({
-            id: k.id,
-            type: "concept",
-            position: kp,
-            selected: selectedId === k.id,
-            data: {
-              name: k.name,
-              icon: k.icon,
-              emoji: k.emoji,
-              color: k.color,
-              count: k.memoryCount,
-              childCount: childrenOf(graph.concepts, k.id).length,
-              nested: true,
-              selected: selectedId === k.id,
-            },
-          });
-          edges.push({
-            id: `${c.id}-${k.id}`,
-            source: c.id,
-            target: k.id,
-            style: { stroke: "rgb(136 187 216 / 40%)", strokeWidth: 1.3 },
-          });
-        });
-      }
     });
     if (draftParent === false) {
       /* no preview */
@@ -323,7 +322,10 @@ function toBranchElements(
   nodes.push({
     id: current.id,
     type: "concept",
-    position: { x: 0, y: 0 },
+    position:
+      current.positionX != null && current.positionY != null
+        ? { x: current.positionX, y: current.positionY }
+        : { x: 0, y: 0 },
     selected: selectedId === current.id,
     data: {
       name: current.name,
@@ -342,7 +344,10 @@ function toBranchElements(
     nodes.push({
       id: parent.id,
       type: "concept",
-      position: { x: 0, y: -210 },
+      position:
+        parent.positionX != null && parent.positionY != null
+          ? { x: parent.positionX, y: parent.positionY }
+          : { x: 0, y: -210 },
       data: {
         name: parent.name,
         icon: parent.icon,
@@ -361,7 +366,8 @@ function toBranchElements(
   }
   const kids = childrenOf(graph.concepts, current.id);
   kids.forEach((k, i) => {
-    const pos = k.positionX != null && k.positionY != null ? { x: k.positionX, y: k.positionY } : ring(i, kids.length, 200);
+    const pos =
+      k.positionX != null && k.positionY != null ? { x: k.positionX, y: k.positionY } : rowBelow(i, kids.length);
     nodes.push({
       id: k.id,
       type: "concept",
@@ -399,7 +405,7 @@ function toBranchElements(
       position:
         m.positionX != null && m.positionY != null
           ? { x: m.positionX, y: m.positionY }
-          : ring(i, memories.length, 310),
+          : { x: 360, y: -((memories.length - 1) * 92) / 2 + i * 92 },
       data: {
         title: m.title,
         kind: m.nodeKind,
@@ -408,6 +414,8 @@ function toBranchElements(
         glow: m.accessCount >= 4 || m.importance >= 5,
         emoji: m.emoji,
         color: m.color,
+        synapse: true,
+        contentLength: (m.body?.length ?? 0) + (m.transcript?.length ?? 0) + m.title.length,
         expanded: memory.openId === m.id,
         onEdit: () => memory.onEdit(m.id),
         onDismiss: memory.onDismiss,
@@ -417,7 +425,8 @@ function toBranchElements(
       id: `mem-${m.id}`,
       source: current.id,
       target: m.id,
-      style: { stroke: "rgb(136 187 216 / 30%)", strokeWidth: 1.1 },
+      animated: false,
+      style: { stroke: "transparent", strokeWidth: 0 },
     });
   });
   if (typeof draftParent === "string") {
@@ -478,6 +487,7 @@ export function MeshCanvas({
   const [tourFilter, setTourFilter] = useState<string | null>(forceFilter ?? null);
   const [tourFocus, setTourFocus] = useState<string | null>(null);
   const [openMemoryId, setOpenMemoryId] = useState<string | null>(null);
+  const [sortAsk, setSortAsk] = useState(false);
   const [mounted, setMounted] = useState(false);
   const onSelectRef = useRef(onSelectMemory);
   onSelectRef.current = onSelectMemory;
@@ -540,6 +550,28 @@ export function MeshCanvas({
   }, [built, viewKey, setEdges, setNodes]);
 
   const persist = useMutation({ mutationFn: savePositions });
+  const sortMut = useMutation({
+    mutationFn: async () => {
+      if (!sectorId) return;
+      const focus = selectedConcept?.id ?? branchId;
+      const positions = layoutTree(graph.concepts, sectorId, focus);
+      const nodesToSave = [...positions.entries()].map(([id, p]) => ({
+        id,
+        type: "concept" as const,
+        x: p.x,
+        y: p.y,
+      }));
+      if (!nodesToSave.length) return;
+      await savePositions({ data: { nodes: nodesToSave } });
+    },
+    onSuccess: async () => {
+      setSortAsk(false);
+      markAccountDirty();
+      toast.success("Branches arranged by hierarchy");
+      await qc.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: () => toast.error("Could not rearrange the branches."),
+  });
   useEffect(() => {
     return registerAccountFlusher(async () => {
       const payload = nodesRef.current
@@ -822,7 +854,7 @@ export function MeshCanvas({
     .join(" > ");
 
   return (
-    <div className="relative h-full w-full">
+    <div className="relative flex h-full w-full flex-col">
       <NavTrail
         crumbs={crumbs}
         sectorId={sectorId}
@@ -833,6 +865,63 @@ export function MeshCanvas({
         onOverview={goOverview}
       />
 
+      {showFlow && !composing && !editing && !editingSector && !selectedConcept ? (
+        <div className="relative z-30 flex flex-col items-stretch gap-1.5 px-2 pb-1">
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              className="h-9 max-w-full px-2.5 text-xs shadow-soft"
+              disabled={!sectorId}
+              onClick={() => {
+                setActionError(null);
+                setComposing(true);
+              }}
+            >
+              <Plus className="size-3.5" />
+              <span className="truncate">{addLabel}</span>
+            </Button>
+            {sectorId ? (
+              <Button type="button" size="sm" variant="secondary" className="h-9 px-2.5 text-xs" onClick={() => setEditingSectorId(sectorId)}>
+                Edit
+              </Button>
+            ) : null}
+            <Button type="button" size="sm" variant="outline" className="h-9 px-2.5 text-xs" onClick={() => setSortAsk(true)}>
+              Sort
+            </Button>
+          </div>
+          <p className="text-center text-[11px] text-muted-foreground">
+            Select a branch to record into it.
+          </p>
+        </div>
+      ) : null}
+
+      {showFlow && selectedConcept && !composing && !editing && !editingSector ? (
+        <div className="relative z-30 flex flex-wrap items-center justify-end gap-1.5 px-2 pb-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="min-h-11"
+            onClick={() => {
+              setActionError(null);
+              setComposing(true);
+            }}
+          >
+            <Plus className="size-4" />
+            Add sub-branch
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => setSortAsk(true)}>
+            Auto sort
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(selectedConcept)}>
+            Edit {selectedConcept.name}
+          </Button>
+        </div>
+      ) : null}
+
+
+      <div className="relative min-h-0 flex-1">
       {!showFlow ? (
         <BrainOverview
           concepts={graph.concepts}
@@ -858,7 +947,7 @@ export function MeshCanvas({
       ) : (
         <ReactFlow
           key={viewKey}
-          className={cn("mindmesh-flow", "brain-depth")}
+          className={cn("mindmesh-flow h-full", "brain-depth")}
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
@@ -868,7 +957,6 @@ export function MeshCanvas({
           onNodeClick={(_e, node) => {
             if (node.id === DRAFT_ID) return;
             if (node.id === SECTOR_HUB) {
-              setBranchId(null);
               setSelectedId(null);
               return;
             }
@@ -879,32 +967,20 @@ export function MeshCanvas({
             const concept = graph.concepts.find((c) => c.id === node.id);
             if (!concept) return;
             setSelectedId(concept.id);
-            const kids = childrenOf(graph.concepts, concept.id);
-            if (branchId === concept.id) {
-              setExpanded((s) => {
-                const next = new Set(s);
-                if (next.has(concept.id)) next.delete(concept.id);
-                else next.add(concept.id);
-                return next;
-              });
-              return;
-            }
-            if (concept.parentId === branchId || (!branchId && !concept.parentId)) {
-              if (kids.length) {
-                setExpanded((s) => new Set(s).add(concept.id));
-                setBranchId(concept.id);
-              } else {
-                setSelectedId(concept.id);
-                setExpanded((s) => new Set(s).add(concept.id));
-              }
-              return;
-            }
-            setBranchId(concept.id);
-            setSectorId(concept.sectorId);
           }}
           onNodeDoubleClick={(_e, node) => {
+            if (node.id === DRAFT_ID || node.type === "memory") return;
+            if (node.id === SECTOR_HUB) {
+              setBranchId(null);
+              setSelectedId(null);
+              return;
+            }
             const concept = graph.concepts.find((c) => c.id === node.id);
-            if (concept) setEditing(concept);
+            if (!concept) return;
+            setSelectedId(concept.id);
+            setSectorId(concept.sectorId);
+            setBranchId(concept.id);
+            setExpanded((s) => new Set(s).add(concept.id));
           }}
           onPaneClick={() => {
             if (!composing) setSelectedId(branchId);
@@ -914,6 +990,10 @@ export function MeshCanvas({
           fitViewOptions={{ padding: 0.28, duration: 420 }}
           minZoom={0.45}
           maxZoom={2.2}
+          translateExtent={[
+            [-1400, -900],
+            [1400, 1600],
+          ]}
           zoomOnScroll
           zoomOnPinch
           zoomOnDoubleClick={false}
@@ -941,54 +1021,7 @@ export function MeshCanvas({
           />
         </ReactFlow>
       )}
-
-      {showFlow && !composing && !editing && !editingSector && !selectedConcept ? (
-        <div className="absolute inset-x-0 top-[6.6rem] z-20 flex flex-col items-stretch gap-2 px-3 md:top-28">
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button
-              type="button"
-              className="min-h-11 max-w-full shadow-soft"
-              disabled={!sectorId}
-              onClick={() => {
-                setActionError(null);
-                setComposing(true);
-              }}
-            >
-              <Plus className="size-4" />
-              <span className="truncate">{addLabel}</span>
-            </Button>
-            {sectorId ? (
-              <Button type="button" variant="secondary" className="min-h-11" onClick={() => setEditingSectorId(sectorId)}>
-                Edit {sectorById(sectorId, sectors).label}
-              </Button>
-            ) : null}
-          </div>
-          <div className="rounded-xl border border-border bg-background/90 px-4 py-3 text-center text-sm text-muted-foreground">
-            Select a branch to record into it. The mic will not start until a parent is chosen.
-          </div>
-        </div>
-      ) : null}
-
-      {showFlow && selectedConcept && !composing && !editing && !editingSector ? (
-        <div className="absolute top-[6.6rem] right-3 z-20 flex flex-col items-end gap-2 md:top-28 md:right-8">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="min-h-11"
-            onClick={() => {
-              setActionError(null);
-              setComposing(true);
-            }}
-          >
-            <Plus className="size-4" />
-            Add sub-branch
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(selectedConcept)}>
-            Edit {selectedConcept.name}
-          </Button>
-        </div>
-      ) : null}
+      </div>
 
       {!showFlow && !touring ? (
         <button
@@ -1120,6 +1153,24 @@ export function MeshCanvas({
             });
           }}
         />
+      ) : null}
+      {sortAsk ? (
+        <div className="absolute inset-0 z-40 grid place-items-end bg-background/55 p-4 md:place-items-center">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-soft" role="dialog" aria-labelledby="sort-title">
+            <h2 id="sort-title" className="font-display text-xl">Replace this arrangement?</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Auto sort throws away the positions you dragged and lays only the branches in the view you are looking at under their parent.
+            </p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setSortAsk(false)}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={sortMut.isPending} onClick={() => sortMut.mutate()}>
+                {sortMut.isPending ? "Sorting…" : "Sort branches"}
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

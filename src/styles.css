@@ -1,3 +1,8 @@
+html, body {
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
+
 @import "tailwindcss";
 
 @theme {
@@ -134,12 +139,71 @@
   touch-action: none;
   cursor: grab;
 }
-.brain-stage:active {
+.brain-stage:active,
+.brain-stage.is-dragging {
   cursor: grabbing;
+}
+.brain-cam {
+  transition: transform 0.55s ease;
+}
+.brain-stage.is-dragging .brain-cam,
+.brain-stage.is-dragging .brain-tilt {
+  transition: none;
 }
 .brain-tilt {
   transform-style: preserve-3d;
-  perspective: 900px;
+  transition: transform 0.55s ease;
+}
+.brain-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 24px 40px rgb(40 0 80 / 45%));
+  pointer-events: none;
+}
+.brain-mesh {
+  position: absolute;
+  inset: 14% 16% 18%;
+  width: 68%;
+  height: 62%;
+  margin: auto;
+  object-fit: contain;
+  mix-blend-mode: screen;
+  opacity: 0.72;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse at center, black 42%, transparent 72%);
+}
+.brain-lobe-hot {
+  position: absolute;
+  inset: 18% 20% 22%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgb(190 80 255 / 38%), transparent 68%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+.synapse-node > div:first-of-type {
+  box-shadow: 0 0 16px rgb(150 80 255 / 70%), 0 0 2px rgb(120 200 255 / 80%);
+}
+.mindmesh-flow .react-flow__controls button {
+  width: 28px;
+  height: 28px;
+}
+@media (max-width: 767px) {
+  .mindmesh-flow .react-flow__minimap {
+    display: none;
+  }
+  .mindmesh-flow .react-flow__controls {
+    transform: none;
+    bottom: 5.75rem !important;
+    left: 0.6rem !important;
+    margin: 0;
+  }
+  .brain-ctrl {
+    width: 3rem;
+    height: 3rem;
+  }
 }
 .brain-ctrl {
   display: flex;
@@ -174,4 +238,19 @@
   .brain-depth .react-flow__viewport {
     transition: none;
   }
+}
+
+@keyframes synapse-flow {
+  0%, 100% { opacity: 0.75; filter: drop-shadow(0 0 2px #b44cff); }
+  50% { opacity: 1; filter: drop-shadow(0 0 8px #88bbd8); }
+}
+.synapse-node svg { animation: synapse-flow 1.8s ease-in-out infinite; }
+
+@keyframes soma-pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+.synapse-soma { animation: soma-pulse 2.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .synapse-soma, .synapse-pulse { animation: none; }
 }

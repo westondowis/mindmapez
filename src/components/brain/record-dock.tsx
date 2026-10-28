@@ -1,4 +1,4 @@
-import { FileText, Mic, Paperclip, Pause, Play, Square, Trash2, Check, SquarePen } from "lucide-react";
+import { ChevronUp, FileText, Mic, Paperclip, Pause, Play, Square, Trash2, Check, SquarePen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -25,6 +25,7 @@ export function RecordDock({
   onBusyChange?: (busy: boolean) => void;
   pending?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const rec = useRecorder();
   const live = rec.status === "recording" || rec.status === "paused" || rec.status === "requesting";
   const fileRef = useRef<HTMLInputElement>(null);
@@ -79,11 +80,25 @@ export function RecordDock({
   const active = saved.find((m) => m.id === tab) ?? null;
 
   return (
-    <div className="absolute bottom-24 left-1/2 z-20 flex max-h-[min(46dvh,22rem)] w-[min(100%-1rem,26rem)] -translate-x-1/2 flex-col rounded-2xl border border-border bg-background/95 p-3 shadow-soft backdrop-blur-md md:bottom-10 md:p-4">
-      <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{pathLabel}</p>
-      <p className="mt-0.5 text-sm text-foreground">
-        {saved.length} saved {saved.length === 1 ? "memory" : "memories"}
-      </p>
+    <div className={cn(
+      "absolute bottom-[4.6rem] left-16 right-2 z-20 flex flex-col rounded-xl border border-border bg-background/95 shadow-soft backdrop-blur-md md:inset-x-auto md:left-1/2 md:right-auto md:w-[min(100%-1rem,26rem)] md:-translate-x-1/2 md:bottom-6",
+      open ? "max-h-[min(42dvh,20rem)]" : "max-h-12",
+    )}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-12 w-full items-center justify-between gap-2 px-3 text-left"
+        aria-expanded={open}
+      >
+        <span className="min-w-0">
+          <span className="block text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Memories</span>
+          <span className="block truncate text-xs text-foreground">{pathLabel} · {saved.length}</span>
+        </span>
+        <ChevronUp className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3">
+      <p className="sr-only">{pathLabel}</p>
 
       <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Memories on this branch">
         {saved.map((m) => (
@@ -287,6 +302,8 @@ export function RecordDock({
       ) : null}
         </div>
       )}
+      </div>
+      ) : null}
     </div>
   );
 }

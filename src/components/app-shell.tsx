@@ -129,7 +129,7 @@ export function AppShell({
       </main>
 
       {!locked ? (
-        <nav className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-around border-t border-border bg-background/90 px-1 py-1.5 backdrop-blur-md md:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-30 flex h-16 items-center justify-around border-t border-border bg-background/90 px-1 py-1.5 backdrop-blur-md touch-manipulation md:hidden" style={{ transform: "none", zoom: 1 }}>
           {(
             [
               NAV[0],

@@ -22,7 +22,7 @@ export function NavTrail({
 }) {
   const sector = sectorId ? sectorById(sectorId, sectors) : null;
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex flex-col items-center gap-2 px-3 md:top-4">
+    <div className="pointer-events-none relative z-30 flex w-full flex-col items-center gap-1.5 px-2 pt-2 md:px-4 md:pt-3">
       <div className="pointer-events-auto flex w-full max-w-[min(100%,920px)] items-center gap-1 overflow-x-auto rounded-xl border border-border bg-background/75 p-1.5 backdrop-blur-md scrollbar-none">
         <Button
           type="button"

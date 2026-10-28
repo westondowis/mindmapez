@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { AccountSignOut } from "@/components/account-sign-out";
-import { GithubSyncCard } from "@/components/github-sync-card";
+import { DriveBackupCard } from "@/components/drive-backup-card";
 import { AppShell } from "@/components/app-shell";
 import { PageHeader } from "@/components/page-header";
 import { RequireAuth } from "@/components/require-auth";
@@ -117,7 +117,7 @@ function SettingsPage() {
             <AccountSignOut />
           </div>
         </section>
-        <GithubSyncCard />
+        <DriveBackupCard />
         <section className="mt-4 rounded-xl border border-highlight/40 bg-card p-5">
           <h2 className="font-display text-xl">Backup & restore</h2>
           <p className="mt-2 text-sm text-muted-foreground">
