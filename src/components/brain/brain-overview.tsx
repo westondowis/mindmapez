@@ -84,21 +84,20 @@ function Lightning({ reduced }: { reduced: boolean }) {
   const next = useRef(0);
   useFrame(({ clock }) => {
     if (reduced || !group.current) return;
-    if (clock.elapsedTime < next.current) return;
-    next.current = clock.elapsedTime + 0.35 + Math.random() * 1.1;
+    if (clock.elapsedTime < next.current && lines.current.length) return;
+    next.current = clock.elapsedTime + 0.6 + Math.random() * 0.8;
     lines.current.forEach((l) => {
       l.geometry.dispose();
       (l.material as THREE.Material).dispose();
       group.current?.remove(l);
     });
-    const count = 4 + Math.floor(Math.random() * 5);
+    const count = 10 + Math.floor(Math.random() * 6);
     const fresh: THREE.Line[] = [];
     for (let i = 0; i < count; i++) {
       const geo = new THREE.BufferGeometry().setFromPoints(boltPoints());
       const mat = new THREE.LineBasicMaterial({
-        color: Math.random() > 0.4 ? "#d46bff" : "#88bbd8",
-        transparent: true,
-        opacity: 0.55 + Math.random() * 0.4,
+        color: Math.random() > 0.3 ? "#e8a0ff" : "#c9b6ff",
+        transparent: false,
       });
       const line = new THREE.Line(geo, mat);
       group.current.add(line);
@@ -145,9 +144,9 @@ function BrainModel({
       const mat = mesh.material;
       const apply = (m: THREE.Material) => {
         const std = m as THREE.MeshStandardMaterial;
-        if ("color" in std && std.color) std.color.set("#1a1028");
-        if ("emissive" in std && std.emissive) std.emissive.set("#5a1a9a");
-        if ("emissiveIntensity" in std) std.emissiveIntensity = reduced ? 0.12 : 0.42;
+        if ("color" in std && std.color) std.color.set("#3a2458");
+        if ("emissive" in std && std.emissive) std.emissive.set("#b44cff");
+        if ("emissiveIntensity" in std) std.emissiveIntensity = reduced ? 0.35 : 0.85;
         if ("roughness" in std) std.roughness = 0.55;
         if ("metalness" in std) std.metalness = 0.12;
       };
@@ -198,8 +197,8 @@ function BrainModel({
               onPointerOver={() => { setHover(sector.id); onHover?.(sector.id); }}
               onPointerOut={() => { setHover(null); onHover?.(null); }}
             >
-              <sphereGeometry args={[hot ? 0.09 : 0.055, 16, 16]} />
-              <meshBasicMaterial color={hot ? "#f9c54b" : "#88bbd8"} transparent opacity={hot ? 0.95 : 0.55} />
+              <sphereGeometry args={[hot ? 0.11 : 0.07, 16, 16]} />
+              <meshBasicMaterial color={hot ? "#f9c54b" : "#6ee7ff"} />
             </mesh>
 
           </group>
@@ -319,8 +318,8 @@ export function BrainOverview({
     <div className="absolute inset-0 bg-black">
       <Canvas camera={{ position: [HOME.x, HOME.y, HOME.z], fov: 42 }} dpr={[1, 1.75]}>
         <color attach="background" args={["#00040c"]} />
-        <ambientLight intensity={0.35} />
-        <pointLight position={[2.4, 1.6, 2.2]} intensity={18} color="#c9a6ff" />
+        <ambientLight intensity={0.7} />
+        <pointLight position={[2.4, 1.6, 2.2]} intensity={40} color="#e8c6ff" />
         <pointLight position={[-2.2, -0.4, 1.4]} intensity={8} color="#3aa0ff" />
         <Stars radius={40} depth={20} count={reduced ? 200 : 900} factor={2} fade speed={reduced ? 0 : 0.4} />
         <Lightning reduced={reduced} />
