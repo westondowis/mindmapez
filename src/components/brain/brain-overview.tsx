@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Html, Line, OrbitControls, Stars, useGLTF } from "@react-three/drei";
+import { Line, OrbitControls, Stars, useGLTF } from "@react-three/drei";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import {
@@ -174,6 +174,7 @@ function BrainModel({
   spotlightId,
   reduced,
   anchors,
+  labelEls,
   guide,
   onPick,
   onHover,
@@ -183,6 +184,7 @@ function BrainModel({
   guide: boolean;
   reduced: boolean;
   anchors: MutableRefObject<Record<string, THREE.Vector3>>;
+  labelEls: MutableRefObject<Record<string, HTMLButtonElement | null>>;
   onPick: (id: BrainSectorId) => void;
   onHover?: (id: BrainSectorId | null) => void;
 }) {
@@ -248,8 +250,29 @@ function BrainModel({
 
   useEffect(() => () => handle.dispose(), [handle]);
 
-  useFrame(({ clock }) => {
+  const projected = useMemo(() => new THREE.Vector3(), []);
+  useFrame(({ clock, camera, size: view }) => {
     if (!reduced) handle.tick(clock.elapsedTime);
+    // Labels are plain DOM buttons (one shared overlay), positioned from the 3D
+    // anchor each frame and clamped on screen, so none can drift off the edge.
+    const lift = guide ? GUIDE_LIFT : BRAIN_LIFT;
+    for (const { sector, label } of pins) {
+      const el = labelEls.current[sector.id];
+      if (!el) continue;
+      projected.copy(label);
+      projected.y += lift;
+      projected.project(camera);
+      if (projected.z > 1) {
+        el.style.opacity = "0";
+        continue;
+      }
+      const halfW = el.offsetWidth / 2 + 6;
+      const halfH = el.offsetHeight / 2 + 6;
+      const x = THREE.MathUtils.clamp((projected.x * 0.5 + 0.5) * view.width, halfW, view.width - halfW);
+      const y = THREE.MathUtils.clamp((-projected.y * 0.5 + 0.5) * view.height, halfH, view.height - halfH);
+      el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+      el.style.opacity = "1";
+    }
   });
 
   // Each sector's pin sits on the real lobe it names, on the camera-facing side.
@@ -350,27 +373,6 @@ function BrainModel({
               transparent
               opacity={0.6}
             />
-            <Html position={label} center zIndexRange={[20, 0]} pointerEvents="none">
-              <button
-                type="button"
-                onClick={() => onPick(sector.id)}
-                onPointerEnter={() => {
-                  setHover(sector.id);
-                  onHover?.(sector.id);
-                }}
-                onPointerLeave={() => {
-                  setHover(null);
-                  onHover?.(null);
-                }}
-                className={`pointer-events-auto whitespace-nowrap rounded-full border font-medium text-white ${compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-[11px]"} backdrop-blur-sm transition-colors ${
-                  hot
-                    ? "border-amber-300/70 bg-black/80 shadow-[0_0_16px_rgba(249,197,75,0.45)]"
-                    : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
-                }`}
-              >
-                {sector.label.replace(" lobe", "")}
-              </button>
-            </Html>
           </group>
         );
       })}
@@ -470,6 +472,7 @@ export function BrainOverview({
   const controls = useRef<any>(null);
   const homeDist = useRef(HOME.length());
   const anchors = useRef<Record<string, THREE.Vector3>>({});
+  const labelEls = useRef<Record<string, HTMLButtonElement | null>>({});
   const [fly, setFly] = useState<BrainSectorId | null>(null);
   const [hovered, setHovered] = useState<BrainSectorId | null>(null);
   const pending = useRef<BrainSectorId | null>(null);
@@ -534,6 +537,7 @@ export function BrainOverview({
           reduced={reduced}
           guide={guide}
           anchors={anchors}
+          labelEls={labelEls}
           onPick={pick}
           onHover={setHovered}
         />
@@ -558,6 +562,31 @@ export function BrainOverview({
           </EffectComposer>
         </Quiet>
       </Canvas>
+      <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+        {sectors.map((sector) => {
+          const hot = hovered === sector.id || spotlightId === sector.id;
+          return (
+            <button
+              key={sector.id}
+              ref={(el) => {
+                labelEls.current[sector.id] = el;
+              }}
+              type="button"
+              onClick={() => pick(sector.id)}
+              onPointerEnter={() => setHovered(sector.id)}
+              onPointerLeave={() => setHovered(null)}
+              style={{ opacity: 0 }}
+              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-colors sm:px-2.5 sm:py-1 sm:text-[11px] ${
+                hot
+                  ? "border-amber-300/70 bg-black/80 shadow-[0_0_16px_rgba(249,197,75,0.45)]"
+                  : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
+              }`}
+            >
+              {sector.label.replace(" lobe", "")}
+            </button>
+          );
+        })}
+      </div>
       <div className="pointer-events-none absolute left-3 top-2 z-10 text-[10px] tracking-wide text-white/35">
         {BRAIN_BUILD}
       </div>

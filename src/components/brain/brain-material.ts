@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
 /** Shown in the corner of the brain view so you can tell which build is live. */
-export const BRAIN_BUILD = "v3 · lobes + labels";
+export const BRAIN_BUILD = "v4 · overlay labels";
 
 const NOISE = /* glsl */ `
 vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
@@ -131,7 +131,7 @@ diffuseColor.rgb *= 0.4 + 1.0*smoothstep(-0.6,0.6,hb);`,
       .replace(
         "#include <normal_fragment_maps>",
         `#include <normal_fragment_maps>
-normal = brainBump(-vViewPosition, normal, vec2(dFdx(hb), dFdy(hb))*1.5, faceDirection);`,
+normal = brainBump(-vViewPosition, normal, vec2(dFdx(hb), dFdy(hb))*2.2, faceDirection);`,
       )
       .replace(
         "#include <emissivemap_fragment>",
@@ -142,8 +142,8 @@ normal = brainBump(-vViewPosition, normal, vec2(dFdx(hb), dFdy(hb))*1.5, faceDir
   vec3 warp = vec3(snoise(warpSeed), snoise(warpSeed+7.3), snoise(warpSeed+13.1));
   float r1 = ridge(wp*8.5 + warp*0.55);
   float r2 = ridge(wp*19.0 + warp*0.8 + 3.7);
-  float region = smoothstep(-0.2, 0.45, snoise(wp*2.2 + 1.3));
-  float core1 = smoothstep(0.964, 0.996, r1);
+  float region = smoothstep(0.0, 0.5, snoise(wp*2.2 + 1.3));
+  float core1 = smoothstep(0.958, 0.992, r1);
   float halo1 = smoothstep(0.88, 0.985, r1);
   float core2 = smoothstep(0.974, 0.996, r2) * 0.5;
   float veins = (core1 + core2) * region;
@@ -157,10 +157,12 @@ normal = brainBump(-vViewPosition, normal, vec2(dFdx(hb), dFdy(hb))*1.5, faceDir
   totalEmissiveRadiance += (vc*(veins*(3.8*pulse + strike)) + vec3(0.42,0.08,0.85)*halo*(0.5 + strike*0.5)) * uVein;
   float rim = pow(1.0 - saturate(dot(normalize(vViewPosition), normal)), 3.0);
   totalEmissiveRadiance += vec3(0.36,0.14,0.78) * rim * 0.5;
+  float fib = smoothstep(0.92, 0.985, ridge(wp*52.0 + warp*0.35 + 9.1)) * smoothstep(0.25, 0.9, rim);
+  totalEmissiveRadiance += vec3(0.5,0.34,1.0) * fib * 1.1 * uVein;
 }`,
       );
   };
-  material.customProgramCacheKey = () => "brain-veins-v4";
+  material.customProgramCacheKey = () => "brain-veins-v5";
 
   return {
     material,
