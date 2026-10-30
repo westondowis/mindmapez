@@ -61,6 +61,7 @@
     "date-fns": "^4.0.0",
     "framer-motion": "^13.4.0",
     "jose": "6.2.9",
+    "jszip": "^3.10.2",
     "kysely": "^0.28.5",
     "lucide-react": "^0.510.0",
     "pg": "^8.16.3",

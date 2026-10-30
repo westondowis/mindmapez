@@ -24,6 +24,8 @@ export type ConceptNodeData = {
   isEditing?: boolean;
   expanded?: boolean;
   nested?: boolean;
+  firstLayer?: boolean;
+  isMoveUp?: boolean;
 };
 export type MemoryNodeData = {
   title: string;
@@ -85,11 +87,10 @@ export function ConceptNode({ data }: NodeProps) {
   const d = data as ConceptNodeData;
   const Icon = (d.icon && CONCEPT_ICONS[d.icon]) || CONCEPT_ICONS.brain;
   const ring = nodeColorCss(d.color);
-  const size = d.nested ? "size-12" : "size-16";
   return (
     <div
       className={cn(
-        "relative flex flex-col items-center",
+        "relative flex w-28 flex-col items-center",
         d.dimmed && "opacity-25",
         d.isDraft && "opacity-80",
       )}
@@ -98,18 +99,26 @@ export function ConceptNode({ data }: NodeProps) {
       <Handle type="source" position={Position.Bottom} />
       <div
         className={cn(
-          "flex items-center justify-center rounded-full border bg-card text-primary shadow-[0_0_18px_rgb(136_187_216/0.2)]",
-          size,
-          d.selected && "branch-selected",
-          d.isParent && "ring-2 ring-highlight/70",
-          d.isEditing && "ring-2 ring-primary",
+          "flex size-16 shrink-0 items-center justify-center rounded-full border bg-card text-primary shadow-[0_0_18px_rgb(136_187_216/0.2)] origin-center transition-transform duration-150",
+          d.selected && "scale-110",
           d.isDraft && "border-dashed",
+          d.firstLayer && "bg-[#004250]/40",
+          d.isMoveUp && "border-dashed border-white/40 bg-black/40",
         )}
-        style={{ borderColor: ring, boxShadow: d.selected ? `0 0 22px ${ring}` : undefined }}
+        style={{
+          borderColor: ring,
+          boxShadow: d.selected
+            ? `0 0 22px ${ring}`
+            : d.firstLayer
+              ? "0 0 28px rgb(136 187 216 / 0.55)"
+              : undefined,
+          outline: d.firstLayer ? "2px solid rgb(136 187 216 / 0.7)" : d.isParent ? "2px solid rgb(249 197 75 / 0.7)" : undefined,
+          outlineOffset: "2px",
+        }}
       >
         {d.emoji ? <span className="text-2xl leading-none">{d.emoji}</span> : Icon ? <Icon className="size-6" /> : null}
       </div>
-      <div className="mt-2 max-w-28 text-center">
+      <div className="mt-2 h-9 w-28 text-center">
         <div className="truncate text-xs font-medium text-foreground">{d.name}</div>
         <div className="text-[10px] tabular-nums text-muted-foreground">
           {typeof d.childCount === "number" && d.childCount > 0 ? (

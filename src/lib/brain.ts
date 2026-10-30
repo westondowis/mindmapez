@@ -12,39 +12,79 @@ export const BRAIN_SECTORS = [
 /** What each region actually does, plus a personal starting point. Teaching copy only. */
 export const SECTOR_INSIGHT: Record<
   BrainSectorId,
-  { handles: string; example: string }
+  { handles: string; example: string; emoji: string; uses: string[] }
 > = {
   frontal: {
-    handles: "Planning, decisions, goals, and self-control.",
-    example:
-      "Work plans, habits you want to keep, and choices you’re weighing — like whether to take a job or how you want the next year to go.",
+    emoji: "🧠",
+    handles: "Plans, decisions, and the goals you’re driving toward.",
+    example: "Career moves, habits, and the choices that shape the next year.",
+    uses: [
+      "Career goals and the next step at work",
+      "A decision you’re sitting on",
+      "The plan for the next 90 days",
+    ],
   },
   parietal: {
-    handles: "Attention, space, and how pieces fit together.",
-    example:
-      "A home project, a trip you’re mapping, or a budget you’re arranging. Use it for where things go and what you’re paying attention to.",
+    emoji: "🧩",
+    handles: "How the pieces of life fit together.",
+    example: "Schedules, money, projects, and where your time actually goes.",
+    uses: [
+      "How work, family, and free time share the week",
+      "A budget or a side project you’re arranging",
+      "A trip or event with the people you care about",
+    ],
   },
   temporal: {
-    handles: "Memory, language, and the people in your stories.",
-    example:
-      "Family memories, conversations you don’t want to lose, and lessons tied to someone. This is the region most tied to remembering.",
+    emoji: "💬",
+    handles: "People, relationships, and the stories that matter.",
+    example: "Family, friends, partners, and the conversations you want to keep.",
+    uses: [
+      "Family and the people closest to you",
+      "Friendships and the groups you’re in",
+      "A relationship you’re building or repairing",
+    ],
   },
   occipital: {
-    handles: "What you see, and the pictures that stick.",
-    example:
-      "A room you want to redesign, a place that stayed with you, or a visual idea you keep coming back to.",
+    emoji: "👁️",
+    handles: "Visions for the future and the goals you can picture.",
+    example: "The life you’re aiming at, and the milestones that get you there.",
+    uses: [
+      "A long-term vision: career, home, or a license you’re working toward",
+      "A goal you can see clearly, like a house or a role",
+      "What the next few years look like if things go well",
+    ],
   },
   cerebellum: {
-    handles: "Practice, timing, and skills your body learns by repeating them.",
-    example:
-      "A golf swing, a workout, or any drill you repeat until it feels automatic.",
+    emoji: "🎯",
+    handles: "Skills, sports, and anything that improves with practice.",
+    example: "The games you play, the hobbies you train, and the drills you repeat.",
+    uses: [
+      "A sport you play with friends",
+      "Fantasy football or any league you follow",
+      "A skill you’re practicing until it sticks",
+    ],
   },
   brainstem: {
-    handles: "The basics that keep you going: sleep, energy, and alertness.",
-    example:
-      "How you slept, how your body feels day to day, and the routines that hold everything else up.",
+    emoji: "⚡",
+    handles: "Energy, health, and the basics that keep everything else going.",
+    example: "Sleep, how you feel day to day, and the routines that hold it together.",
+    uses: [
+      "Sleep and how rested you feel",
+      "Health and energy through the week",
+      "The small daily habits everything else sits on",
+    ],
   },
 };
+
+
+export function sectorTitle(sector: BrainSector) {
+  const anatomy = sector.anatomy;
+  const emoji = sector.emoji || SECTOR_INSIGHT[sector.id].emoji;
+  const renamed = sector.named && sector.label.trim() !== anatomy;
+  const user = renamed ? sector.label.trim() : "";
+  const short = user.length > 18 ? user.slice(0, 16) + "…" : user;
+  return { anatomy, emoji, user, short, renamed };
+}
 
 export type BrainSectorId = (typeof BRAIN_SECTORS)[number]["id"];
 

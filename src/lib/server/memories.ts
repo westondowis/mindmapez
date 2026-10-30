@@ -255,6 +255,7 @@ export const updateMemory = createServerFn({ method: "POST" })
       emoji?: string | null;
       color?: string | null;
       tags?: string[];
+      aiSummary?: string | null;
     }) => input,
   )
   .middleware([authMiddleware])
@@ -273,11 +274,13 @@ export const updateMemory = createServerFn({ method: "POST" })
     const color = data.color === undefined ? existing[0].color : data.color;
     const tags =
       data.tags === undefined ? existing[0].tags_json : JSON.stringify(normalizeTags(data.tags));
+    const aiSummary = data.aiSummary === undefined ? existing[0].ai_summary : data.aiSummary;
     await sql`
       update memories
       set title = ${title}, body = ${body}, emotion = ${emotion},
           importance = ${importance}, node_kind = ${nodeKind},
-          emoji = ${emoji}, color = ${color}, tags_json = ${tags}, updated_at = now()
+          emoji = ${emoji}, color = ${color}, tags_json = ${tags},
+          ai_summary = ${aiSummary}, updated_at = now()
       where id = ${data.id} and user_id = ${context.userId}
     `;
     await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;

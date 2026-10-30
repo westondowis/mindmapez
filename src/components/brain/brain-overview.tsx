@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import * as THREE from "three";
-import { primaryBranches, SECTOR_INSIGHT, type BrainSector, type BrainSectorId } from "@/lib/brain";
+import { primaryBranches, SECTOR_INSIGHT, sectorTitle, type BrainSector, type BrainSectorId } from "@/lib/brain";
 import type { Concept } from "@/lib/types";
 import { BRAIN_BUILD, createBrainMaterial } from "./brain-material";
 
@@ -475,6 +475,7 @@ export function BrainOverview({
   const labelEls = useRef<Record<string, HTMLButtonElement | null>>({});
   const [fly, setFly] = useState<BrainSectorId | null>(null);
   const [hovered, setHovered] = useState<BrainSectorId | null>(null);
+  const [speaking, setSpeaking] = useState(false);
   const pending = useRef<BrainSectorId | null>(null);
   const flyTarget = useMemo(() => {
     const sector = sectors.find((s) => s.id === fly);
@@ -582,13 +583,15 @@ export function BrainOverview({
                   : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
               }`}
             >
-              {sector.label.replace(" lobe", "")}
+              {(() => { const t = sectorTitle(sector); return t.renamed ? `${t.anatomy} ${t.emoji} ${t.short}` : `${t.anatomy} ${t.emoji}`; })()}
             </button>
           );
         })}
       </div>
       <div className="pointer-events-none absolute left-3 top-2 z-10 text-[10px] tracking-wide text-white/35">
         {BRAIN_BUILD}
+      <VoicePanel onSpeaking={setSpeaking} />
+      {speaking ? <div className="pointer-events-none absolute inset-0 z-10 animate-pulse bg-[#6a2ca8]/15" /> : null}
       </div>
       <div className="pointer-events-auto absolute right-3 top-3 z-20 flex flex-row gap-2 md:right-5 md:top-1/2 md:-translate-y-1/2 md:flex-col">
         <button type="button" className="brain-ctrl" aria-label="Zoom in" onClick={() => zoomBy(0.82)}>
@@ -621,7 +624,7 @@ export function BrainOverview({
               onPointerEnter={() => setHovered(sector.id)}
               className={`shrink-0 rounded-full px-2.5 py-1.5 text-[11px] ${hovered === sector.id ? "bg-[#6a2ca8] text-white" : "bg-black/55 text-white/85"}`}
             >
-              {sector.label.replace(" lobe", "")}
+              {(() => { const t = sectorTitle(sector); return t.renamed ? `${t.anatomy} ${t.emoji} ${t.short}` : `${t.anatomy} ${t.emoji}`; })()}
             </button>
           ))}
         </div>

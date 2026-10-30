@@ -28,12 +28,15 @@ export function MemorySheet({
   const m = q.data;
   const [title, setTitle] = useState<string | null>(null);
   const [body, setBody] = useState<string | null>(null);
+  const [overview, setOverview] = useState<string | null>(null);
   const titleValue = title ?? m?.title ?? "";
   const bodyValue = body ?? m?.body ?? "";
+  const overviewValue = overview ?? m?.aiSummary ?? "";
 
   useEffect(() => {
     setTitle(null);
     setBody(null);
+    setOverview(null);
   }, [memoryId]);
 
   const save = useMutation({
@@ -92,9 +95,21 @@ export function MemorySheet({
               />
             </label>
             <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              Quick overview
+              <Textarea
+                className="mt-1 max-h-28 min-h-16 overflow-y-auto"
+                value={overviewValue}
+                onChange={(e) => setOverview(e.target.value)}
+                onBlur={() => {
+                  if (overviewValue !== (m.aiSummary ?? "")) save.mutate({ data: { id: m.id, aiSummary: overviewValue } });
+                }}
+                placeholder="A short overview of this memory"
+              />
+            </label>
+            <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
               Note
               <Textarea
-                className="mt-1 min-h-28"
+                className="mt-1 max-h-48 min-h-28 overflow-y-auto"
                 value={bodyValue}
                 onChange={(e) => setBody(e.target.value)}
                 onBlur={() => {
@@ -118,11 +133,7 @@ export function MemorySheet({
               />
               {m.emotion ? <span className="text-sm text-muted-foreground">{m.emotion}</span> : null}
             </div>
-            {m.aiSummary ? (
-              <p className="mt-4 rounded-lg border border-border bg-card px-3 py-3 text-sm text-foreground/90">
-                {m.aiSummary}
-              </p>
-            ) : null}
+
             {m.sourceUrl ? (
               <a
                 href={m.sourceUrl}
@@ -141,6 +152,11 @@ export function MemorySheet({
             ) : null}
             {m.mediaUrl && m.mediaMime?.startsWith("audio/") ? (
               <audio className="mt-4 w-full" controls src={m.mediaUrl} />
+            ) : null}
+            {m.mediaUrl && !m.mediaMime?.startsWith("audio/") && !m.mediaMime?.startsWith("image/") && !m.mediaMime?.startsWith("video/") ? (
+              <a href={m.mediaUrl} download={m.mediaName ?? "document"} className="mt-3 inline-block text-sm text-primary hover:underline">
+                Download original{m.mediaName ? ` · ${m.mediaName}` : ""}
+              </a>
             ) : null}
             {m.mediaUrl && m.mediaMime?.startsWith("image/") ? (
               <img src={m.mediaUrl} alt="" className="mt-4 max-h-56 w-full rounded-lg object-cover" />

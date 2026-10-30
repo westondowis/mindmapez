@@ -22,6 +22,8 @@ import { BranchSheet } from "@/components/brain/branch-sheet";
 import { NavTrail } from "@/components/brain/nav-trail";
 import { RecordDock } from "@/components/brain/record-dock";
 import { SectorEditor } from "@/components/brain/sector-editor";
+import { SectorGuide } from "@/components/brain/sector-guide";
+import { sectorTitle } from "@/lib/brain";
 import { Button } from "@/components/ui/button";
 import { markAccountDirty, registerAccountFlusher } from "@/lib/account-persist";
 import {
@@ -268,6 +270,7 @@ function toBranchElements(
           selected: selectedId === c.id,
           isEditing: editingId === c.id,
           expanded: expanded.has(c.id),
+          firstLayer: true,
         },
       });
       edges.push({
@@ -340,30 +343,18 @@ function toBranchElements(
       expanded: true,
     },
   });
-  if (parent) {
-    nodes.push({
-      id: parent.id,
-      type: "concept",
-      position:
-        parent.positionX != null && parent.positionY != null
-          ? { x: parent.positionX, y: parent.positionY }
-          : { x: 0, y: -210 },
-      data: {
-        name: parent.name,
-        icon: parent.icon,
-        emoji: parent.emoji,
-        color: parent.color,
-        count: parent.memoryCount,
-        nested: true,
-      },
-    });
-    edges.push({
-      id: `up-${parent.id}`,
-      source: parent.id,
-      target: current.id,
-      style: { stroke: "rgb(136 187 216 / 35%)", strokeWidth: 1.4 },
-    });
-  }
+  nodes.push({
+    id: "__move_up__",
+    type: "concept",
+    position: { x: 0, y: -180 },
+    draggable: false,
+    data: {
+      name: "Move Up Branch",
+      emoji: "⬆️",
+      count: 0,
+      isMoveUp: true,
+    },
+  });
   const kids = childrenOf(graph.concepts, current.id);
   kids.forEach((k, i) => {
     const pos =
@@ -397,15 +388,19 @@ function toBranchElements(
     });
   });
   const memories = graph.memories.filter((m) => linkedTo(graph, m.id, current.id));
+  const hub = nodes.find((n) => n.id === current.id)?.position ?? { x: 0, y: 0 };
   memories.forEach((m, i) => {
     const created = new Date(m.createdAt).getTime();
+    const chars = (m.body?.length ?? 0) + (m.transcript?.length ?? 0) + m.title.length;
+    const strand = synapseLayout(chars).width * 0.78;
+    const gap = 36;
+    const x = hub.x - strand / 2 - gap;
+    const y = hub.y + (i - (memories.length - 1) / 2) * 110;
     nodes.push({
       id: m.id,
       type: "memory",
-      position:
-        m.positionX != null && m.positionY != null
-          ? { x: m.positionX, y: m.positionY }
-          : { x: 360, y: -((memories.length - 1) * 92) / 2 + i * 92 },
+      position: { x, y },
+      draggable: false,
       data: {
         title: m.title,
         kind: m.nodeKind,
@@ -575,7 +570,7 @@ export function MeshCanvas({
   useEffect(() => {
     return registerAccountFlusher(async () => {
       const payload = nodesRef.current
-        .filter((n) => n.id !== ME_ID && n.id !== SECTOR_HUB && n.id !== DRAFT_ID)
+        .filter((n) => n.id !== ME_ID && n.id !== SECTOR_HUB && n.id !== DRAFT_ID && n.id !== "__move_up__")
         .map((n) => ({
           id: n.id,
           type: (n.type === "concept" || n.type === "sector" ? "concept" : "memory") as "concept" | "memory",
@@ -590,7 +585,7 @@ export function MeshCanvas({
 
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_e, node) => {
-      if (node.id === ME_ID || node.id === SECTOR_HUB || node.id === DRAFT_ID) return;
+      if (node.id === ME_ID || node.id === SECTOR_HUB || node.id === DRAFT_ID || node.id === "__move_up__") return;
       markAccountDirty();
       persist.mutate({
         data: {
@@ -867,6 +862,20 @@ export function MeshCanvas({
 
       {showFlow && !composing && !editing && !editingSector && !selectedConcept ? (
         <div className="relative z-30 flex flex-col items-stretch gap-1.5 px-2 pb-1">
+          {(() => {
+            const sec = sectors.find((x) => x.id === sectorId);
+            if (!sec) return null;
+            const t = sectorTitle(sec);
+            return (
+              <div className="mx-auto flex w-full max-w-md items-start justify-between gap-2">
+                <div className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/50 px-3 py-1.5 text-white">
+                  <p className="truncate text-sm font-medium">{t.anatomy} {t.emoji}{t.renamed ? ` · ${t.short}` : ""}</p>
+                  {t.renamed ? <p className="truncate text-[11px] text-white/60" title={t.user}>{t.user}</p> : null}
+                </div>
+                <SectorGuide sector={sec} />
+              </div>
+            );
+          })()}
           <div className="flex flex-wrap items-center justify-center gap-1.5">
             <Button
               type="button"
@@ -956,6 +965,13 @@ export function MeshCanvas({
           nodeTypes={nodeTypes}
           onNodeClick={(_e, node) => {
             if (node.id === DRAFT_ID) return;
+            if (node.id === "__move_up__") {
+              const cur = branchId ? graph.concepts.find((c) => c.id === branchId) : null;
+              const up = cur?.parentId ?? null;
+              setBranchId(up);
+              setSelectedId(up);
+              return;
+            }
             if (node.id === SECTOR_HUB) {
               setSelectedId(null);
               return;
@@ -1143,7 +1159,7 @@ export function MeshCanvas({
             voiceMut.mutate({
               data: {
                 title: input.title,
-                body: input.title,
+                body: input.body || input.title,
                 memoryType: "document",
                 mediaUrl: input.mediaUrl,
                 mediaMime: input.mediaMime,

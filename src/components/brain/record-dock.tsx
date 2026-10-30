@@ -19,7 +19,7 @@ export function RecordDock({
   pathLabel: string;
   onSave: (input: { transcript: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
   onSaveNote: (input: { title: string; body: string }) => void;
-  onSaveFile: (input: { title: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
+  onSaveFile: (input: { title: string; body?: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
   onOpenMemory?: (id: string) => void;
   memories?: Memory[];
   onBusyChange?: (busy: boolean) => void;
@@ -65,15 +65,44 @@ export function RecordDock({
     rec.reset();
   }
 
+  async function extractText(file: File): Promise<string> {
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".csv") || file.type.startsWith("text/")) {
+      return await file.text();
+    }
+    if (name.endsWith(".docx")) {
+      try {
+        const buf = await file.arrayBuffer();
+        const zip = await import("jszip").then((m) => m.default.loadAsync(buf));
+        const xml = await zip.file("word/document.xml")?.async("string");
+        if (!xml) return "";
+        return xml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  }
+
+  function overviewFrom(text: string): string {
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const first = sentences.slice(0, 3).join(" ");
+    return first.length > 280 ? first.slice(0, 277).trim() + "…" : first || text.slice(0, 180);
+  }
+
   async function onFile(file: File | undefined) {
     if (!file) return;
     const mediaUrl = await blobToDataUrl(file);
+    const extracted = await extractText(file);
+    const title = file.name.replace(/\.[^.]+$/, "") || "Document";
     onSaveFile({
-      title: file.name.replace(/\.[^.]+$/, "") || "Document",
+      title,
+      body: extracted || `Document: ${file.name}`,
       mediaUrl,
       mediaMime: file.type || "application/octet-stream",
       mediaName: file.name,
     });
+    void overviewFrom(extracted);
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -144,7 +173,7 @@ export function RecordDock({
               <SquarePen className="size-4" />
             </button>
           </div>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
             {active.transcript || active.body}
           </p>
           {active.mediaUrl && active.mediaMime?.startsWith("audio/") ? (

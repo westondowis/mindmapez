@@ -127,6 +127,15 @@ html, body {
 .mindmesh-flow .react-flow__node {
   cursor: pointer;
 }
+.mindmesh-flow .react-flow__node.selected,
+.mindmesh-flow .react-flow__node:focus,
+.mindmesh-flow .react-flow__node:active {
+  outline: none;
+  box-shadow: none;
+}
+.mindmesh-flow .react-flow__node .react-flow__resize-control {
+  display: none;
+}
 
 .scrollbar-none {
   scrollbar-width: none;
