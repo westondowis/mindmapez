@@ -49,6 +49,7 @@ import {
 import { createMemory, savePositions } from "@/lib/server/memories";
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { synapseLayout } from "@/lib/synapse";
 import { nodeTypes } from "./nodes";
 
 const ME_ID = "me";

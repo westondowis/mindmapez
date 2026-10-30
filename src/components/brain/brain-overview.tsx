@@ -1,6 +1,7 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Line, OrbitControls, Stars, useGLTF } from "@react-three/drei";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
+import { VoicePanel } from "@/components/brain/voice-panel";
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import {
   Component,
