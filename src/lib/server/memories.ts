@@ -98,6 +98,8 @@ export type CreateMemoryInput = {
   tags?: string[];
   sourceUrl?: string | null;
   sourceKind?: string | null;
+  /** Caller-supplied quick overview (e.g. from an uploaded document); wins over the auto summary. */
+  aiSummary?: string | null;
 };
 
 export const createMemory = createServerFn({ method: "POST" })
@@ -127,6 +129,7 @@ export const createMemory = createServerFn({ method: "POST" })
           ? organizeLocal(raw || transcript || "", data.title)
           : await organizeMemory(raw || transcript || "", data.title);
       const id = newId();
+      const summary = data.aiSummary?.trim().slice(0, 600) || organized.summary;
       const title = data.title?.trim() || organized.title;
       const emotion = data.emotion || organized.emotion;
       const importance = data.importance ?? organized.importance;
@@ -165,7 +168,7 @@ export const createMemory = createServerFn({ method: "POST" })
           emoji, color, position_x, position_y, source_url, source_kind
         ) values (
           ${id}, ${context.userId}, ${title}, ${body}, ${data.memoryType}, ${emotion},
-          ${importance}, ${organized.impact}, ${organized.summary}, ${transcript},
+          ${importance}, ${organized.impact}, ${summary}, ${transcript},
           ${data.mediaUrl ?? null}, ${data.mediaMime ?? null}, ${data.mediaName ?? null},
           ${organized.kind}, ${tags}, ${emoji}, ${color}, ${posX}, ${posY},
           ${sourceUrl}, ${sourceKind}

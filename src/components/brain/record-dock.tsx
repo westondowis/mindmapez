@@ -19,7 +19,7 @@ export function RecordDock({
   pathLabel: string;
   onSave: (input: { transcript: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
   onSaveNote: (input: { title: string; body: string }) => void;
-  onSaveFile: (input: { title: string; body?: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
+  onSaveFile: (input: { title: string; body?: string; aiSummary?: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
   onOpenMemory?: (id: string) => void;
   memories?: Memory[];
   onBusyChange?: (busy: boolean) => void;
@@ -95,14 +95,15 @@ export function RecordDock({
     const mediaUrl = await blobToDataUrl(file);
     const extracted = await extractText(file);
     const title = file.name.replace(/\.[^.]+$/, "") || "Document";
+    const overview = overviewFrom(extracted);
     onSaveFile({
       title,
       body: extracted || `Document: ${file.name}`,
+      aiSummary: overview || undefined,
       mediaUrl,
       mediaMime: file.type || "application/octet-stream",
       mediaName: file.name,
     });
-    void overviewFrom(extracted);
     if (fileRef.current) fileRef.current.value = "";
   }
 

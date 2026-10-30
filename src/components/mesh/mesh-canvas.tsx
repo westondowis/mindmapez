@@ -1161,6 +1161,7 @@ export function MeshCanvas({
               data: {
                 title: input.title,
                 body: input.body || input.title,
+                aiSummary: input.aiSummary,
                 memoryType: "document",
                 mediaUrl: input.mediaUrl,
                 mediaMime: input.mediaMime,
