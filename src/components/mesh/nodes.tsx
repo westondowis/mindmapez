@@ -1,8 +1,10 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { useId, useSyncExternalStore } from "react";
 import { ChevronDown, ChevronRight, SquarePen, X } from "lucide-react";
 import { CONCEPT_ICONS } from "@/lib/concept-icons";
 import { KIND_COLOR } from "@/lib/kind-styles";
 import { nodeColorCss } from "@/lib/node-colors";
+import { SYNAPSE_LEAD, SYNAPSE_PITCH, synapseLayout } from "@/lib/synapse";
 import type { NodeKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -126,42 +128,119 @@ export function ConceptNode({ data }: NodeProps) {
   );
 }
 
-const MIN_SYNAPSE = 72;
-const MAX_SYNAPSE = 210;
-function synapseWidth(chars = 0) {
-  const f = Math.log10(Math.max(chars, 12));
-  return Math.min(MAX_SYNAPSE, Math.max(MIN_SYNAPSE, MIN_SYNAPSE + (f - 1) * 52));
+const MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+function subscribeMotion(cb: () => void) {
+  const mq = window.matchMedia(MOTION_QUERY);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+/** True when the viewer asked for less motion; SMIL animations ignore the CSS media query. */
+function usePrefersReducedMotion() {
+  return useSyncExternalStore(
+    subscribeMotion,
+    () => window.matchMedia(MOTION_QUERY).matches,
+    () => false,
+  );
 }
 
+/** One full current pulse, in seconds. The soma ring and ambient glow run slower. */
+const PULSE_SECONDS = 2.8;
+
+/**
+ * A memory drawn as a neuron: blue dendrites around a glowing soma, a purple
+ * myelinated axon whose length follows the memory's content, and branching
+ * terminals. A current travels from the terminals (parent side) toward the soma,
+ * lighting each myelin segment as it passes.
+ */
 function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
-  const width = synapseWidth(chars);
-  const beads = Math.max(3, Math.round((width - 52) / 16));
-  const axonEnd = 38 + beads * 14;
+  const uid = useId().replace(/:/g, "");
+  const reduced = usePrefersReducedMotion();
+  const { beads, axonEnd, width } = synapseLayout(chars);
+  const start = SYNAPSE_LEAD - 6;
+  const currentPath = `M${axonEnd + 4} 30 H${start - 4}`;
+  const e = axonEnd;
   return (
-    <svg viewBox={`0 0 ${width} 56`} width={width * 0.78} height="44" aria-hidden className={glow ? "drop-shadow-[0_0_8px_#88bbd8]" : ""}>
-      <g fill="none" stroke="#88bbd8" strokeWidth="1.4" strokeLinecap="round">
-        <path d="M22 28 C10 12 6 8 4 4" />
-        <path d="M22 28 C8 18 4 16 2 14" />
-        <path d="M22 28 C6 28 3 30 1 32" />
-        <path d="M22 28 C10 38 6 44 4 50" />
-        <path d="M22 28 C16 42 14 50 12 54" />
+    <svg viewBox={`0 0 ${width} 60`} width={width * 0.78} height="47" aria-hidden className={glow ? "synapse-svg" : ""}>
+      <defs>
+        <radialGradient id={`soma-${uid}`} cx="45%" cy="40%" r="70%">
+          <stop offset="0%" stopColor="#5b8dff" />
+          <stop offset="70%" stopColor="#1b2f9a" />
+          <stop offset="100%" stopColor="#0f1a5e" />
+        </radialGradient>
+        <radialGradient id={`core-${uid}`}>
+          <stop offset="0%" stopColor="#ffd9ff" />
+          <stop offset="60%" stopColor="#d46bff" />
+          <stop offset="100%" stopColor="#8a2be2" />
+        </radialGradient>
+        <linearGradient id={`sheath-${uid}`} x1="0" x2="1">
+          <stop offset="0%" stopColor="#b44cff" stopOpacity="0.5" />
+          <stop offset="100%" stopColor="#d9a0ff" stopOpacity="0.3" />
+        </linearGradient>
+      </defs>
+
+      {/* dendrites */}
+      <g fill="none" stroke="#4aa3ff" strokeWidth="1.3" strokeLinecap="round" opacity="0.9">
+        <path d="M20 24 C12 18 8 12 5 5" />
+        <path d="M10 14 C6 14 4 12 2 11" strokeWidth="0.9" />
+        <path d="M19 28 C10 26 5 24 1 21" />
+        <path d="M18 32 C9 33 4 35 1 39" />
+        <path d="M20 37 C13 42 10 48 7 55" />
+        <path d="M12 46 C8 45 5 46 3 44" strokeWidth="0.9" />
+        <path d="M26 19 C23 13 22 8 18 3" />
+        <path d="M26 41 C24 47 23 51 20 57" />
+        <path d="M34 20 C36 14 38 10 42 6" strokeWidth="1" />
+        <path d="M34 40 C36 46 38 50 42 54" strokeWidth="1" />
       </g>
-      <circle className="synapse-soma" cx="28" cy="28" r="13" fill="#1a3a8a" stroke="#88bbd8" strokeWidth="1.6" />
-      <circle cx="28" cy="28" r="5.5" fill="#c9b6ff" opacity="0.9" />
-      <path className="synapse-axon" d={`M41 28 H${axonEnd}`} stroke="#d46bff" strokeWidth="2.2" />
-      <g fill="#b44cff" stroke="#f0c4ff" strokeWidth="0.6">
-        {Array.from({ length: beads }, (_, i) => (
-          <rect key={i} x={46 + i * 14} y="22" width="10" height="12" rx="3" />
-        ))}
+
+      {/* soma: ambient ring + body + nucleus */}
+      <circle className="synapse-ring" cx="30" cy="30" r="12" fill="none" stroke="#9a7bff" strokeWidth="1.2" />
+      <g className="synapse-soma">
+        <circle cx="30" cy="30" r="12" fill={`url(#soma-${uid})`} stroke="#7fbfff" strokeWidth="1.4" />
+        <circle cx="30" cy="30" r="8" fill="none" stroke="#a98bff" strokeWidth="0.6" opacity="0.7" />
+        <circle cx="30" cy="30" r="5" fill={`url(#core-${uid})`} />
       </g>
-      <circle className="synapse-pulse" r="3.5" fill="#fff" opacity="0.9">
-        <animateMotion dur="2.4s" repeatCount="indefinite" path={`M41 28 H${axonEnd}`} />
-      </circle>
-      <g fill="none" stroke="#d46bff" strokeWidth="1.3" strokeLinecap="round">
-        <path d={`M${axonEnd} 28 C${axonEnd + 6} 22 ${axonEnd + 8} 16 ${axonEnd + 10} 12`} />
-        <path d={`M${axonEnd} 28 C${axonEnd + 6} 28 ${axonEnd + 8} 28 ${axonEnd + 11} 28`} />
-        <path d={`M${axonEnd} 28 C${axonEnd + 6} 34 ${axonEnd + 8} 40 ${axonEnd + 10} 44`} />
+
+      {/* axon hillock tapering into the first segment */}
+      <path d={`M40 23 C45 26 47 28 ${SYNAPSE_LEAD} 28.6 V31.4 C47 32 45 34 40 37 Z`} fill="#b44cff" fillOpacity="0.4" stroke="#d9a0ff" strokeWidth="0.6" />
+      <path d={`M${SYNAPSE_LEAD} 30 H${e}`} stroke="#cf8cff" strokeWidth="1.2" />
+
+      {/* myelin segments, tapering toward the terminals; each flares as the current passes */}
+      {Array.from({ length: beads }, (_, i) => {
+        const h = 13 - 3.5 * (i / Math.max(1, beads - 1));
+        const x = SYNAPSE_LEAD + 1 + i * SYNAPSE_PITCH;
+        // Seconds into the pulse when the current reaches this segment (it travels end -> soma).
+        const reach = (0.1 + (0.75 * (e - (x + 5))) / Math.max(1, e - start)) * PULSE_SECONDS;
+        return (
+          <g key={i} className="synapse-myelin" style={{ animationDelay: reduced ? undefined : `${reach.toFixed(2)}s` }}>
+            <rect x={x} y={30 - h / 2} width={SYNAPSE_PITCH - 3} height={h} rx="4" fill={`url(#sheath-${uid})`} stroke="#e2b8ff" strokeWidth="0.8" />
+            <path d={`M${x + 2} ${30 - h / 2 + 2.6} H${x + SYNAPSE_PITCH - 5}`} stroke="#fff" strokeOpacity="0.55" strokeWidth="0.7" strokeLinecap="round" />
+          </g>
+        );
+      })}
+
+      {/* terminal branches with bulbs */}
+      <g fill="none" stroke="#c58bff" strokeWidth="1.2" strokeLinecap="round">
+        <path d={`M${e} 30 C${e + 5} 26 ${e + 8} 18 ${e + 14} 12`} />
+        <path d={`M${e} 30 C${e + 6} 28 ${e + 10} 24 ${e + 16} 22`} />
+        <path d={`M${e} 30 C${e + 6} 32 ${e + 10} 36 ${e + 16} 38`} />
+        <path d={`M${e} 30 C${e + 5} 34 ${e + 8} 42 ${e + 14} 48`} />
       </g>
+      <g fill="#e2b8ff">
+        <circle cx={e + 14} cy="12" r="1.8" />
+        <circle cx={e + 16} cy="22" r="1.8" />
+        <circle cx={e + 16} cy="38" r="1.8" />
+        <circle cx={e + 14} cy="48" r="1.8" />
+      </g>
+
+      {/* current: a comet that runs from the parent end of the strand to the soma */}
+      {reduced
+        ? null
+        : [0, 0.14, 0.28].map((lag, i) => (
+            <circle key={i} r={3.6 - i * 1.1} fill={i === 0 ? "#ffffff" : "#e2b8ff"} opacity="0">
+              <animateMotion dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" path={currentPath} keyTimes="0;1" calcMode="linear" />
+              <animate attributeName="opacity" dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" values={`0;${(0.95 - i * 0.28).toFixed(2)};${(0.95 - i * 0.28).toFixed(2)};0`} keyTimes="0;0.1;0.85;1" />
+            </circle>
+          ))}
     </svg>
   );
 }
@@ -179,7 +258,7 @@ export function MemoryNode({ data }: NodeProps) {
       <div className={cn("relative", d.recent && "animate-node-pulse")}>
         <SynapseMark glow={d.glow || d.recent || true} chars={d.contentLength} />
         {d.emoji ? (
-          <span className="absolute left-[18px] top-[14px] text-[11px] leading-none" style={{ color }}>
+          <span className="absolute left-[18px] top-[16px] text-[11px] leading-none" style={{ color }}>
             {d.emoji}
           </span>
         ) : null}

@@ -240,17 +240,38 @@ html, body {
   }
 }
 
+/* Memory neuron: a slow ambient glow, a soma ripple, and a flare on each myelin
+   segment as the current passes (the delay per segment is set inline). */
 @keyframes synapse-flow {
-  0%, 100% { opacity: 0.75; filter: drop-shadow(0 0 2px #b44cff); }
-  50% { opacity: 1; filter: drop-shadow(0 0 8px #88bbd8); }
+  0%, 100% { opacity: 0.82; filter: drop-shadow(0 0 2px #b44cff); }
+  50% { opacity: 1; filter: drop-shadow(0 0 7px #88bbd8); }
 }
-.synapse-node svg { animation: synapse-flow 1.8s ease-in-out infinite; }
+.synapse-svg { animation: synapse-flow 3.6s ease-in-out infinite; }
 
-@keyframes soma-pulse {
-  0%, 100% { opacity: 0.8; }
-  50% { opacity: 1; }
+@keyframes soma-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.88; }
+  50% { transform: scale(1.06); opacity: 1; }
 }
-.synapse-soma { animation: soma-pulse 2.6s ease-in-out infinite; }
+.synapse-soma {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: soma-breathe 3.6s ease-in-out infinite;
+}
+@keyframes soma-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(1.85); opacity: 0; }
+}
+.synapse-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: soma-ring 3.6s ease-out infinite;
+}
+@keyframes myelin-flare {
+  0%, 24%, 100% { opacity: 0.78; filter: none; }
+  7% { opacity: 1; filter: drop-shadow(0 0 3px #ffffff) brightness(1.8); }
+}
+.synapse-myelin { opacity: 0.78; animation: myelin-flare 2.8s linear infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .synapse-soma, .synapse-pulse { animation: none; }
+  .synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin { animation: none; }
+  .synapse-ring { opacity: 0; }
 }
