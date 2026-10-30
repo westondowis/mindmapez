@@ -10,26 +10,31 @@ export async function grokChat(
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) return { ok: false, error: "AI is not available in this environment" };
 
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      max_tokens: opts.maxTokens ?? 700,
-      temperature: opts.temperature ?? 0.4,
-    }),
-  });
-  if (!res.ok) {
-    return { ok: false, error: `xAI API error ${res.status}` };
+  try {
+    const res = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages,
+        max_tokens: opts.maxTokens ?? 700,
+        temperature: opts.temperature ?? 0.4,
+      }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!res.ok) {
+      return { ok: false, error: `xAI API error ${res.status}` };
+    }
+    const body = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    return { ok: true, text: body.choices?.[0]?.message?.content ?? "" };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "AI request failed" };
   }
-  const body = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  return { ok: true, text: body.choices?.[0]?.message?.content ?? "" };
 }
 
 export async function organizeMemory(

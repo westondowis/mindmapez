@@ -86,9 +86,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       const said = res.ok ? res.content : "I could not reach the brain just now.";
       setReply(said);
       speak(said);
-    } catch {
+    } catch (err) {
+      console.error("[voice]", err);
+      const detail = err instanceof Error ? err.message : "";
       const said = "Something went wrong. Please try again.";
-      setReply(said);
+      setReply(detail ? `${said} (${detail.slice(0, 120)})` : said);
       speak(said);
     } finally {
       setBusy(false);
@@ -96,6 +98,18 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   }
 
   function listen() {
+    // iOS only allows speech output that starts from a tap: prime it here so the
+    // reply (which arrives after a network round trip) is allowed to play.
+    try {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const prime = new SpeechSynthesisUtterance(" ");
+        prime.volume = 0;
+        window.speechSynthesis.speak(prime);
+      }
+    } catch {
+      // speech output unavailable: replies still show as text
+    }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       setReply("Voice input is not available in this browser.");
