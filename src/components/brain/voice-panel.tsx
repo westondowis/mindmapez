@@ -19,13 +19,41 @@ import { createMemory } from "@/lib/server/memories";
 
 type VoiceChoice = "male" | "female";
 
+const MALE_NAMES = /daniel|alex|aaron|arthur|fred|david|james|guy|gordon|oliver|rishi|tom|evan|nathan|google uk english male|male/i;
+const FEMALE_NAMES = /samantha|ava|allison|susan|serena|karen|moira|tessa|victoria|zira|jenny|aria|nicky|kate|stephanie|google us english|google uk english female|female/i;
+
+/** Higher = more natural. Prefers the device's premium/enhanced/Siri/Google/neural voices. */
+function voiceQuality(v: SpeechSynthesisVoice): number {
+  const n = `${v.name} ${v.voiceURI}`;
+  let q = 0;
+  if (/premium|enhanced|neural|natural|siri|online/i.test(n)) q += 6;
+  if (/google/i.test(n)) q += 3;
+  if (/^en[-_]us/i.test(v.lang)) q += 2;
+  else if (/^en/i.test(v.lang)) q += 1;
+  if (v.localService) q += 1;
+  if (/compact|eloquence|novelty|bad news|bahh|bells|boing|cellos|good news|jester|organ|superstar|trinoids|whisper|zarvox|albert|bubbles|deranged|hysterical/i.test(n)) q -= 20;
+  return q;
+}
+
 function pickVoice(choice: VoiceChoice): SpeechSynthesisVoice | null {
   if (typeof window === "undefined" || !window.speechSynthesis) return null;
-  const voices = window.speechSynthesis.getVoices();
-  const male = /daniel|alex|fred|david|james|male/i;
-  const female = /samantha|victoria|karen|moira|female|zira/i;
-  const match = voices.find((v) => (choice === "male" ? male : female).test(v.name));
-  return match ?? voices[choice === "male" ? 0 : 1] ?? voices[0] ?? null;
+  const en = window.speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+  if (!en.length) return null;
+  const wanted = choice === "male" ? MALE_NAMES : FEMALE_NAMES;
+  const other = choice === "male" ? FEMALE_NAMES : MALE_NAMES;
+  const score = (v: SpeechSynthesisVoice) =>
+    voiceQuality(v) + (wanted.test(v.name) ? 8 : 0) - (other.test(v.name) && !wanted.test(v.name) ? 8 : 0);
+  return [...en].sort((a, b) => score(b) - score(a))[0] ?? null;
+}
+
+/** Plain, speakable text split into sentence-sized chunks (long utterances get cut off on some phones). */
+function speechChunks(text: string): string[] {
+  const clean = text
+    .replace(/[*_#`>]+/g, "")
+    .replace(/^\s*[•\-]\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clean.match(/[^.!?]+[.!?]*\s*/g)?.map((c) => c.trim()).filter(Boolean) ?? [];
 }
 
 export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }) {
@@ -46,8 +74,12 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       // storage unavailable (private mode): keep the default voice
     }
     window.speechSynthesis?.getVoices();
+    // Voices load asynchronously on most phones; touching them again once ready.
+    const warm = () => void window.speechSynthesis?.getVoices();
+    window.speechSynthesis?.addEventListener?.("voiceschanged", warm);
     // Stop talking if the panel goes away mid-sentence.
     return () => {
+      window.speechSynthesis?.removeEventListener?.("voiceschanged", warm);
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -55,15 +87,21 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   function speak(text: string) {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
     const v = pickVoice(voice);
-    if (v) u.voice = v;
-    u.rate = 0.9;
-    u.pitch = voice === "male" ? 0.8 : 0.95;
-    u.onstart = () => onSpeaking(true);
-    u.onend = () => onSpeaking(false);
-    u.onerror = () => onSpeaking(false);
-    window.speechSynthesis.speak(u);
+    const chunks = speechChunks(text);
+    chunks.forEach((chunk, i) => {
+      const u = new SpeechSynthesisUtterance(chunk);
+      if (v) {
+        u.voice = v;
+        u.lang = v.lang;
+      }
+      u.rate = 1;
+      u.pitch = voice === "male" ? 0.92 : 1;
+      if (i === 0) u.onstart = () => onSpeaking(true);
+      if (i === chunks.length - 1) u.onend = () => onSpeaking(false);
+      u.onerror = () => onSpeaking(false);
+      window.speechSynthesis.speak(u);
+    });
   }
 
   async function handle(text: string) {

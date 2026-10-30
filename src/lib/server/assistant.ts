@@ -25,6 +25,12 @@ export const listAssistant = createServerFn({ method: "GET" })
     }));
   });
 
+/** Postgres drivers return timestamps as Date or string; normalise to YYYY-MM-DD. */
+function dayOf(v: unknown): string {
+  const d = new Date(v as string | number | Date);
+  return Number.isNaN(d.getTime()) ? "unknown date" : d.toISOString().slice(0, 10);
+}
+
 export const askAssistant = createServerFn({ method: "POST" })
   .validator((input: { prompt: string }) => input)
   .middleware([authMiddleware])
@@ -59,7 +65,7 @@ export const askAssistant = createServerFn({ method: "POST" })
     const contextBlock = ranked
       .map(
         (m, i) =>
-          `${i + 1}. "${m.title}" (${m.created_at.slice(0, 10)}, ${m.emotion ?? "unmarked"}): ${m.ai_summary ?? m.body.slice(0, 240)}`,
+          `${i + 1}. "${m.title}" (${dayOf(m.created_at)}, ${m.emotion ?? "unmarked"}): ${m.ai_summary ?? m.body.slice(0, 240)}`,
       )
       .join("\n");
 
