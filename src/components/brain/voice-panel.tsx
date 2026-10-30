@@ -66,7 +66,10 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [line, setLine] = useState("");
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
+  const [continuous, setContinuous] = useState(false);
   const pending = useRef<{ raw: string; keyPoints: string[]; tags: string[]; conceptId: string | null; name: string | null } | null>(null);
+  const continuousRef = useRef(false);
+  const silence = useRef<number | null>(null);
   const recRef = useRef<SpeechRecognition | null>(null);
   const qc = useQueryClient();
 
@@ -102,7 +105,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       u.rate = 1;
       u.pitch = voice === "male" ? 0.92 : 1;
       if (i === 0) u.onstart = () => onSpeaking(true);
-      if (i === chunks.length - 1) u.onend = () => { onSpeaking(false); setBusy(false); setHearing(false); };
+      if (i === chunks.length - 1) u.onend = () => { onSpeaking(false); setBusy(false); setHearing(false); if (continuousRef.current) window.setTimeout(() => listen(), 250); };
       u.onerror = () => { onSpeaking(false); setBusy(false); setHearing(false); };
       window.speechSynthesis.speak(u);
     });
@@ -114,7 +117,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     setLine(clean);
     setBusy(true);
     try {
-      if (pending.current && /^(yes|yeah|save it|do it|confirm)/i.test(clean)) {
+      if (pending.current && /^(yes|yeah|save it|do it|confirm|i'?m done|im done|store this|that is all|that'?s all|no,? i'?m done|save this)/i.test(clean)) {
         const p = pending.current;
         const body = p.raw + "\n\nKey points:\n" + p.keyPoints.map((k) => "• " + k).join("\n");
         await createMemory({ data: { title: p.raw.slice(0, 80), body, transcript: p.raw, memoryType: "voice", tags: p.tags, conceptId: p.conceptId } });
@@ -185,22 +188,23 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     handled.current = false;
     const rec = new SR();
     rec.lang = "en-US";
-    rec.continuous = false;
+    rec.continuous = continuousRef.current;
     rec.interimResults = true;
-    rec.onresult = (e) => {
-      let interim = "";
-      let finalText = "";
-      for (let i = 0; i < e.results.length; i++) {
-        const bit = e.results[i];
-        const t = bit?.[0]?.transcript ?? "";
-        if (bit?.isFinal) finalText += t;
-        else interim += t;
-      }
-      if (interim) setLine(interim);
-      if (!finalText || handled.current) return;
+    const buffer = { text: "" };
+    const commit = () => {
+      if (handled.current || !buffer.text.trim()) return;
       handled.current = true;
       setHearing(false);
-      void handle(finalText);
+      try { rec.stop(); } catch { /* already stopped */ }
+      void handle(buffer.text.trim());
+    };
+    rec.onresult = (e) => {
+      let text = "";
+      for (let i = 0; i < e.results.length; i++) text += e.results[i]?.[0]?.transcript ?? "";
+      buffer.text = text;
+      setLine(text);
+      if (silence.current) window.clearTimeout(silence.current);
+      silence.current = window.setTimeout(commit, 1800);
     };
     rec.onerror = () => { setHearing(false); setBusy(false); };
     rec.onend = () => { if (!handled.current) setHearing(false); };
@@ -246,6 +250,14 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           </button>
         ))}
       </div>
+      <label className="mt-2 flex items-center gap-2 text-[11px] text-white/80">
+        <input
+          type="checkbox"
+          checked={continuous}
+          onChange={(e) => { setContinuous(e.target.checked); continuousRef.current = e.target.checked; }}
+        />
+        Continuous conversation
+      </label>
       <button
         type="button"
         onClick={listen}

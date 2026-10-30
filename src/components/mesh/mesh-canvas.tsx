@@ -68,15 +68,16 @@ function rowBelow(index: number, total: number, origin = { x: 0, y: 0 }, gap = 2
 
 function layoutTree(concepts: Concept[], sectorId: string, focusId?: string | null) {
   const positions = new Map<string, { x: number; y: number }>();
-  // When a branch is focused, only rearrange its direct children.
   if (focusId && focusId !== sectorId) {
+    const parent = concepts.find((c) => c.id === focusId);
+    const origin = { x: parent?.positionX ?? 0, y: parent?.positionY ?? 0 };
     const kids = childrenOf(concepts, focusId);
-    kids.forEach((k, i) => positions.set(k.id, rowBelow(i, kids.length, { x: 0, y: 0 }, 190, 240)));
+    kids.forEach((k, i) => positions.set(k.id, rowBelow(i, kids.length, origin, 220, 280)));
     return positions;
   }
   const primaries = childrenOf(concepts, null, sectorId);
   primaries.forEach((c, i) => {
-    positions.set(c.id, rowBelow(i, primaries.length, { x: 0, y: 0 }, 210, 250));
+    positions.set(c.id, rowBelow(i, primaries.length, { x: 0, y: 40 }, 230, 260));
   });
   const place = (parentId: string) => {
     const kids = childrenOf(concepts, parentId);
@@ -344,10 +345,11 @@ function toBranchElements(
       expanded: true,
     },
   });
+  const currentPos = nodes.find((n) => n.id === current.id)?.position ?? { x: 0, y: 0 };
   nodes.push({
     id: "__move_up__",
     type: "concept",
-    position: { x: 0, y: -180 },
+    position: { x: currentPos.x, y: currentPos.y - 200 },
     draggable: false,
     data: {
       name: "Move Up Branch",
@@ -355,6 +357,12 @@ function toBranchElements(
       count: 0,
       isMoveUp: true,
     },
+  });
+  edges.push({
+    id: "move-up-tether",
+    source: current.id,
+    target: "__move_up__",
+    style: { stroke: "rgb(136 187 216 / 50%)", strokeWidth: 1.4, strokeDasharray: "5 6" },
   });
   const kids = childrenOf(graph.concepts, current.id);
   kids.forEach((k, i) => {
@@ -584,6 +592,29 @@ export function MeshCanvas({
     });
   }, [graph.concepts]);
 
+  const onNodeDrag: OnNodeDrag = useCallback(
+    (_e, node) => {
+      if (node.type !== "concept") return;
+      setNodes((nds) => {
+        const mems = nds.filter((n) => n.type === "memory");
+        if (!mems.length) return nds;
+        return nds.map((n) => {
+          if (n.type !== "memory") return n;
+          const i = mems.findIndex((m) => m.id === n.id);
+          const chars = (n.data as { contentLength?: number }).contentLength ?? 40;
+          const strand = synapseLayout(chars).width * 0.78;
+          return {
+            ...n,
+            position: {
+              x: node.position.x - strand / 2 - 36,
+              y: node.position.y + (i - (mems.length - 1) / 2) * 110,
+            },
+          };
+        });
+      });
+    },
+    [setNodes],
+  );
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_e, node) => {
       if (node.id === ME_ID || node.id === SECTOR_HUB || node.id === DRAFT_ID || node.id === "__move_up__") return;
@@ -1002,6 +1033,7 @@ export function MeshCanvas({
           onPaneClick={() => {
             if (!composing) setSelectedId(branchId);
           }}
+          onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           fitView
           fitViewOptions={{ padding: 0.28, duration: 420 }}
