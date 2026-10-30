@@ -868,8 +868,8 @@ export function MeshCanvas({
             if (!sec) return null;
             const t = sectorTitle(sec);
             return (
-              <div className="mx-auto flex w-full max-w-md items-start justify-between gap-2">
-                <div className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/50 px-3 py-1.5 text-white">
+              <div className="mx-auto flex w-full max-w-md flex-wrap items-start justify-between gap-2">
+                <div className="min-w-[8rem] flex-1 rounded-xl border border-white/10 bg-black/50 px-3 py-1.5 text-white">
                   <p className="truncate text-sm font-medium">{t.anatomy} {t.emoji}{t.renamed ? ` · ${t.short}` : ""}</p>
                   {t.renamed ? <p className="truncate text-[11px] text-white/60" title={t.user}>{t.user}</p> : null}
                 </div>

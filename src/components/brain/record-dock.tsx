@@ -85,7 +85,7 @@ export function RecordDock({
   }
 
   function overviewFrom(text: string): string {
-    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const sentences = (text.match(/[^.!?]+[.!?]+\s*/g) ?? []).map((s) => s.trim());
     const first = sentences.slice(0, 3).join(" ");
     return first.length > 280 ? first.slice(0, 277).trim() + "…" : first || text.slice(0, 180);
   }

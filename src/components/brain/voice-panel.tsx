@@ -1,4 +1,5 @@
 import { Mic, Volume2 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 type SpeechRecognition = {
   lang: string;
@@ -35,11 +36,20 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const recRef = useRef<SpeechRecognition | null>(null);
+  const qc = useQueryClient();
 
   useEffect(() => {
-    const saved = localStorage.getItem("mm-voice");
-    if (saved === "male" || saved === "female") setVoice(saved);
+    try {
+      const saved = localStorage.getItem("mm-voice");
+      if (saved === "male" || saved === "female") setVoice(saved);
+    } catch {
+      // storage unavailable (private mode): keep the default voice
+    }
     window.speechSynthesis?.getVoices();
+    // Stop talking if the panel goes away mid-sentence.
+    return () => {
+      window.speechSynthesis?.cancel();
+    };
   }, []);
 
   function speak(text: string) {
@@ -61,21 +71,28 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     if (!clean) return;
     setLine(clean);
     setBusy(true);
-    const remember = clean.match(/^(remember|save|add a memory|note that)\s+(.+)/i);
-    if (remember?.[2]) {
-      const body = remember[2];
-      await createMemory({ data: { title: body.slice(0, 80), body, memoryType: "text" } });
-      const said = "Saved. I added that as a memory.";
+    try {
+      const remember = clean.match(/^(remember|save|add a memory|note that)\s+(.+)/i);
+      if (remember?.[2]) {
+        const body = remember[2];
+        await createMemory({ data: { title: body.slice(0, 80), body, memoryType: "text" } });
+        void qc.invalidateQueries({ queryKey: ["graph"] });
+        const said = "Saved. I added that as a memory.";
+        setReply(said);
+        speak(said);
+        return;
+      }
+      const res = await askAssistant({ data: { prompt: clean } });
+      const said = res.ok ? res.content : "I could not reach the brain just now.";
       setReply(said);
       speak(said);
+    } catch {
+      const said = "Something went wrong. Please try again.";
+      setReply(said);
+      speak(said);
+    } finally {
       setBusy(false);
-      return;
     }
-    const res = await askAssistant({ data: { prompt: clean } });
-    const said = res.ok ? res.content : "I could not reach the brain just now.";
-    setReply(said);
-    speak(said);
-    setBusy(false);
   }
 
   function listen() {
@@ -121,7 +138,14 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           <button
             key={v}
             type="button"
-            onClick={() => { setVoice(v); localStorage.setItem("mm-voice", v); }}
+            onClick={() => {
+              setVoice(v);
+              try {
+                localStorage.setItem("mm-voice", v);
+              } catch {
+                // storage unavailable: the choice just won't persist
+              }
+            }}
             className={`rounded-full px-2.5 py-1 text-[11px] ${voice === v ? "bg-[#6a2ca8]" : "bg-white/10"}`}
           >
             {v === "female" ? "Calm female" : "Calm male"}

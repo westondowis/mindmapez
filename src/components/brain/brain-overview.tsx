@@ -591,9 +591,9 @@ export function BrainOverview({
       </div>
       <div className="pointer-events-none absolute left-3 top-2 z-10 text-[10px] tracking-wide text-white/35">
         {BRAIN_BUILD}
+      </div>
       <VoicePanel onSpeaking={setSpeaking} />
       {speaking ? <div className="pointer-events-none absolute inset-0 z-10 animate-pulse bg-[#6a2ca8]/15" /> : null}
-      </div>
       <div className="pointer-events-auto absolute right-3 top-3 z-20 flex flex-row gap-2 md:right-5 md:top-1/2 md:-translate-y-1/2 md:flex-col">
         <button type="button" className="brain-ctrl" aria-label="Zoom in" onClick={() => zoomBy(0.82)}>
           <Plus className="size-4" />
