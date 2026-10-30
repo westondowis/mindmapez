@@ -17,6 +17,7 @@ import {
   type MindBackup,
 } from "@/lib/backup";
 import { exportMind, importMind } from "@/lib/server/backup";
+import { getGraph } from "@/lib/server/memories";
 import { getDashboard, resetSampleMind, setPlan } from "@/lib/server/dashboard";
 import { getAccountDraft } from "@/lib/server/persist";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
@@ -56,22 +57,36 @@ function SettingsPage() {
       toast.success("Sample mind restored");
     },
   });
-  const exp = useMutation({
-    mutationFn: () => exportMind(),
-    onSuccess: (backup) => {
-      const parsed = parseMindBackup(backup);
-      if (!parsed.ok) {
-        toast.error(parsed.error);
-        return;
-      }
-      downloadBackupFile(parsed.backup);
-      const s = summarizeBackup(parsed.backup);
-      toast.success(
-        `Exported ${s.branchCount} branches and ${s.memoryCount} memories. Keep this file — you can restore it after a reset.`,
-      );
-    },
-    onError: () => toast.error("Could not export your mind. Try again."),
-  });
+  const [exporting, setExporting] = useState(false);
+  async function exportJson() {
+    setExporting(true);
+    try {
+      const graph = await getGraph();
+      const payload = {
+        format: "mindmesh-export",
+        exportedAt: new Date().toISOString(),
+        sectors: graph.sectors ?? [],
+        concepts: graph.concepts ?? [],
+        memories: graph.memories ?? [],
+        connections: graph.connections ?? [],
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      a.href = url;
+      a.download = `memory_brain_export_${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      toast.success(`Exported ${payload.concepts.length} branches and ${payload.memories.length} memories.`);
+    } catch {
+      toast.error("Could not export your mind. Try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
   const imp = useMutation({
     mutationFn: (backup: MindBackup) => importMind({ data: { backup } }),
     onSuccess: async (res) => {
@@ -131,8 +146,8 @@ function SettingsPage() {
               : "Loading counts…"}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button type="button" onClick={() => exp.mutate()} disabled={exp.isPending}>
-              {exp.isPending ? "Preparing file…" : "Export JSON"}
+            <Button type="button" onClick={() => void exportJson()} disabled={exporting}>
+              {exporting ? "Preparing file…" : "Export JSON"}
             </Button>
             <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>
               Restore from file

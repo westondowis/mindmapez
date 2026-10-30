@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Pencil, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ export function MemorySheet({
   const [title, setTitle] = useState<string | null>(null);
   const [body, setBody] = useState<string | null>(null);
   const [overview, setOverview] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const titleValue = title ?? m?.title ?? "";
   const bodyValue = body ?? m?.body ?? "";
   const overviewValue = overview ?? m?.aiSummary ?? "";
@@ -37,6 +38,7 @@ export function MemorySheet({
     setTitle(null);
     setBody(null);
     setOverview(null);
+    setEditing(false);
   }, [memoryId]);
 
   const save = useMutation({
@@ -64,10 +66,15 @@ export function MemorySheet({
   return (
     <aside className="absolute inset-x-0 bottom-0 z-30 flex max-h-[min(72dvh,36rem)] w-full flex-col rounded-t-2xl border border-border bg-background/96 shadow-soft backdrop-blur-md md:inset-y-0 md:right-0 md:left-auto md:max-h-none md:max-w-md md:rounded-none md:border-y-0 md:border-r-0">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-primary">Edit memory</p>
-        <button type="button" onClick={onClose} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Close">
+        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-primary">{editing ? "Edit memory" : "Memory"}</p>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={() => setEditing((v) => !v)} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label={editing ? "Done editing" : "Edit memory"}>
+            <Pencil className="size-4" />
+          </button>
+          <button type="button" onClick={onClose} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Close">
           <X className="size-5" />
         </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto px-5 py-5">
         {q.isPending || !m ? (
@@ -81,42 +88,51 @@ export function MemorySheet({
               <Badge tone={KIND_TONE[m.nodeKind]}>{KIND_LABEL[m.nodeKind]}</Badge>
               <span className="text-xs text-muted-foreground">{formatDate(m.createdAt)}</span>
             </div>
-            <h2 className="sr-only">{m.title}</h2>
-            <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              Title
-              <Input
-                className="mt-1"
-                value={titleValue}
-                onChange={(e) => setTitle(e.target.value)}
-                onBlur={() => {
-                  const next = titleValue.trim();
-                  if (next && next !== m.title) save.mutate({ data: { id: m.id, title: next } });
-                }}
-              />
-            </label>
-            <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              Quick overview
-              <Textarea
-                className="mt-1 max-h-28 min-h-16 overflow-y-auto"
-                value={overviewValue}
-                onChange={(e) => setOverview(e.target.value)}
-                onBlur={() => {
-                  if (overviewValue !== (m.aiSummary ?? "")) save.mutate({ data: { id: m.id, aiSummary: overviewValue } });
-                }}
-                placeholder="A short overview of this memory"
-              />
-            </label>
-            <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              Note
-              <Textarea
-                className="mt-1 max-h-48 min-h-28 overflow-y-auto"
-                value={bodyValue}
-                onChange={(e) => setBody(e.target.value)}
-                onBlur={() => {
-                  if (bodyValue !== m.body) save.mutate({ data: { id: m.id, body: bodyValue } });
-                }}
-              />
-            </label>
+            {editing ? (
+              <>
+                <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                  Title
+                  <Input
+                    className="mt-1"
+                    value={titleValue}
+                    onChange={(e) => setTitle(e.target.value)}
+                    onBlur={() => {
+                      const next = titleValue.trim();
+                      if (next && next !== m.title) save.mutate({ data: { id: m.id, title: next } });
+                    }}
+                  />
+                </label>
+                <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                  Quick overview
+                  <Textarea
+                    className="mt-1 max-h-28 min-h-16 overflow-y-auto"
+                    value={overviewValue}
+                    onChange={(e) => setOverview(e.target.value)}
+                    onBlur={() => {
+                      if (overviewValue !== (m.aiSummary ?? "")) save.mutate({ data: { id: m.id, aiSummary: overviewValue } });
+                    }}
+                    placeholder="A short overview of this memory"
+                  />
+                </label>
+                <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                  Note
+                  <Textarea
+                    className="mt-1 max-h-48 min-h-28 overflow-y-auto"
+                    value={bodyValue}
+                    onChange={(e) => setBody(e.target.value)}
+                    onBlur={() => {
+                      if (bodyValue !== m.body) save.mutate({ data: { id: m.id, body: bodyValue } });
+                    }}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <h2 className="mt-3 font-display text-xl text-foreground">{m.title}</h2>
+                {m.aiSummary ? <p className="mt-2 max-h-28 overflow-y-auto text-sm text-[#c9b6ff]">{m.aiSummary}</p> : null}
+                <p className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{m.body}</p>
+              </>
+            )}
             <div className="mt-4">
               <GlyphRow
                 emoji={m.emoji || "✨"}

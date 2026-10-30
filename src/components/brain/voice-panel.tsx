@@ -3,8 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 type SpeechRecognition = {
   lang: string;
+  continuous: boolean;
+  interimResults: boolean;
   start: () => void;
-  onresult: ((e: { results: { 0: { 0: { transcript: string } } } }) => void) | null;
+  stop: () => void;
+  onresult: ((e: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null;
   onerror: (() => void) | null;
   onend: (() => void) | null;
 };
@@ -14,7 +17,7 @@ declare global {
     webkitSpeechRecognition?: new () => SpeechRecognition;
   }
 }
-import { askAssistant } from "@/lib/server/assistant";
+import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { createMemory } from "@/lib/server/memories";
 
 type VoiceChoice = "male" | "female";
@@ -63,6 +66,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [line, setLine] = useState("");
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
+  const pending = useRef<{ raw: string; keyPoints: string[]; tags: string[]; conceptId: string | null; name: string | null } | null>(null);
   const recRef = useRef<SpeechRecognition | null>(null);
   const qc = useQueryClient();
 
@@ -98,8 +102,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       u.rate = 1;
       u.pitch = voice === "male" ? 0.92 : 1;
       if (i === 0) u.onstart = () => onSpeaking(true);
-      if (i === chunks.length - 1) u.onend = () => onSpeaking(false);
-      u.onerror = () => onSpeaking(false);
+      if (i === chunks.length - 1) u.onend = () => { onSpeaking(false); setBusy(false); setHearing(false); };
+      u.onerror = () => { onSpeaking(false); setBusy(false); setHearing(false); };
       window.speechSynthesis.speak(u);
     });
   }
@@ -110,12 +114,37 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     setLine(clean);
     setBusy(true);
     try {
-      const remember = clean.match(/^(remember|save|add a memory|note that)\s+(.+)/i);
-      if (remember?.[2]) {
-        const body = remember[2];
-        await createMemory({ data: { title: body.slice(0, 80), body, memoryType: "text" } });
+      if (pending.current && /^(yes|yeah|save it|do it|confirm)/i.test(clean)) {
+        const p = pending.current;
+        const body = p.raw + "\n\nKey points:\n" + p.keyPoints.map((k) => "• " + k).join("\n");
+        await createMemory({ data: { title: p.raw.slice(0, 80), body, transcript: p.raw, memoryType: "voice", tags: p.tags, conceptId: p.conceptId } });
         void qc.invalidateQueries({ queryKey: ["graph"] });
-        const said = "Saved. I added that as a memory.";
+        pending.current = null;
+        const said = p.name ? `Saved under ${p.name}.` : "Saved as a new memory.";
+        setReply(said);
+        speak(said);
+        return;
+      }
+      if (pending.current && /^(no|cancel|don't|do not)/i.test(clean)) {
+        pending.current = null;
+        const said = "Okay, I did not save that.";
+        setReply(said);
+        speak(said);
+        return;
+      }
+      const remember = clean.match(/^(remember|save|add a memory|note that|i want to remember)\s+(.+)/i);
+      const note = remember?.[2] ?? (clean.split(/\s+/).length > 18 ? clean : null);
+      if (note) {
+        const plan = await voiceIngest({ data: { transcript: note } });
+        if (!plan.ok) throw new Error(plan.error);
+        if (plan.clarify) {
+          setReply(plan.clarify);
+          speak(plan.clarify);
+          return;
+        }
+        pending.current = { raw: plan.raw, keyPoints: plan.keyPoints, tags: plan.tags, conceptId: plan.suggested?.id ?? null, name: plan.suggested?.name ?? null };
+        const where = plan.suggested ? `I would put this under ${plan.suggested.name}.` : "I do not see a matching branch. I can save it unfiled.";
+        const said = `${where} Tags: ${plan.tags.slice(0, 3).join(", ") || "none"}. Say yes to save.`;
         setReply(said);
         speak(said);
         return;
@@ -130,14 +159,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       const said = "Something went wrong. Please try again.";
       setReply(detail ? `${said} (${detail.slice(0, 120)})` : said);
       speak(said);
-    } finally {
-      setBusy(false);
     }
   }
 
+  const handled = useRef(false);
+
   function listen() {
-    // iOS only allows speech output that starts from a tap: prime it here so the
-    // reply (which arrives after a network round trip) is allowed to play.
+    if (busy) return;
     try {
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
@@ -153,15 +181,29 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       setReply("Voice input is not available in this browser.");
       return;
     }
+    try { recRef.current?.stop(); } catch { /* already stopped */ }
+    handled.current = false;
     const rec = new SR();
     rec.lang = "en-US";
+    rec.continuous = false;
+    rec.interimResults = true;
     rec.onresult = (e) => {
-      const text = e.results[0]?.[0]?.transcript ?? "";
+      let interim = "";
+      let finalText = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const bit = e.results[i];
+        const t = bit?.[0]?.transcript ?? "";
+        if (bit?.isFinal) finalText += t;
+        else interim += t;
+      }
+      if (interim) setLine(interim);
+      if (!finalText || handled.current) return;
+      handled.current = true;
       setHearing(false);
-      void handle(text);
+      void handle(finalText);
     };
-    rec.onerror = () => setHearing(false);
-    rec.onend = () => setHearing(false);
+    rec.onerror = () => { setHearing(false); setBusy(false); };
+    rec.onend = () => { if (!handled.current) setHearing(false); };
     recRef.current = rec;
     setHearing(true);
     rec.start();

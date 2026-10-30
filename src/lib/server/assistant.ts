@@ -76,12 +76,20 @@ export const askAssistant = createServerFn({ method: "POST" })
       limit 8
     `;
 
+    const concepts = await sql<{ id: string; name: string; sector_id: string | null; parent_id: string | null }>`
+      select id, name, sector_id, parent_id from concepts where user_id = ${context.userId} order by name
+    `;
+    const taxonomy = concepts
+      .slice(0, 40)
+      .map((c) => `${c.parent_id ? "  - " : "- "}${c.name}${c.sector_id ? ` [${c.sector_id}]` : ""}`)
+      .join("\n");
+
     const ai = await grokChat(
       [
         {
           role: "system",
           content:
-            "You are the MindMesh assistant, trained only on this person's memory network. Answer from the retrieved memories. Name specific memories by title. Surface patterns across domains (golf, real estate, family, health). If something isn't in the memories, say so. Be concise, warm, and precise. No markdown headings. Use short paragraphs.",
+            "You are the MindMesh assistant. You know this person's memory network and the branch map below. When asked where to put something, name a real branch from the map. If none fits, say so and offer to create one. Be concise. No markdown headings.\n\nBranch map:\n" + (taxonomy || "(no branches yet)"),
         },
         ...history
           .reverse()
@@ -113,4 +121,37 @@ export const askAssistant = createServerFn({ method: "POST" })
       values (${id}, ${context.userId}, 'assistant', ${text})
     `;
     return { ok: true as const, id, content: text };
+  });
+
+export const voiceIngest = createServerFn({ method: "POST" })
+  .validator((input: { transcript: string }) => input)
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const raw = data.transcript.trim();
+    if (!raw) return { ok: false as const, error: "Empty note" };
+    const sql = await getSql();
+    const concepts = await sql<{ id: string; name: string; sector_id: string | null; parent_id: string | null }>`
+      select id, name, sector_id, parent_id from concepts where user_id = ${context.userId}
+    `;
+    const words = raw.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+    const scored = concepts
+      .map((c) => ({
+        c,
+        score: words.filter((w) => c.name.toLowerCase().includes(w) || w.includes(c.name.toLowerCase().slice(0, 5))).length,
+      }))
+      .sort((a, b) => b.score - a.score);
+    const best = scored[0]?.score ? scored[0].c : null;
+    const sentences = raw.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const keyPoints = sentences.slice(0, 4).map((x) => x.trim());
+    const tags = Array.from(new Set(words.filter((w) => w.length > 4))).slice(0, 6);
+    const thin = raw.split(/\s+/).length < 8 || !/[.?!]/.test(raw);
+    return {
+      ok: true as const,
+      raw,
+      keyPoints,
+      tags,
+      clarify: thin ? "Can you say a bit more about what you want to keep from that?" : null,
+      suggested: best ? { id: best.id, name: best.name, sectorId: best.sector_id } : null,
+      branches: concepts.slice(0, 12).map((c) => c.name),
+    };
   });
