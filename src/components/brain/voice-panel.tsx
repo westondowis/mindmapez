@@ -234,6 +234,34 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     try { recRef.current?.stop(); } catch { /* already stopped */ }
   }
 
+  /** Fully release SpeechRecognition before TTS so iOS leaves play-and-record (telephony) mode and routes to A2DP/Bluetooth. */
+  function releaseRecognitionForPlayback() {
+    if (restartTimer.current) window.clearTimeout(restartTimer.current);
+    restartTimer.current = null;
+    const rec = recRef.current;
+    recRef.current = null; // detach so onend cannot schedule a restart mid-speech
+    isStartingRef.current = false;
+    try { (rec as (SpeechRecognition & { abort?: () => void }) | null)?.abort?.() ?? rec?.stop(); } catch { try { rec?.stop(); } catch { /* already stopped */ } }
+    // Recognition-only (iOS) path holds no GUM stream; if any track exists there, mute it (never stop/re-request).
+    if (recognitionOnly.current) streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
+  }
+
+  /** Resolve a real voice; on iOS getVoices() is often empty until voiceschanged fires once. */
+  function withVoice(cb: (v: SpeechSynthesisVoice | null) => void) {
+    const synth = window.speechSynthesis;
+    const v = pickVoice(voice);
+    if (v || synth.getVoices().length) return cb(v ?? synth.getVoices()[0] ?? null);
+    let fired = false;
+    const go = () => {
+      if (fired) return;
+      fired = true;
+      synth.removeEventListener?.("voiceschanged", go);
+      cb(pickVoice(voice) ?? synth.getVoices()[0] ?? null);
+    };
+    synth.addEventListener?.("voiceschanged", go);
+    window.setTimeout(go, 1000);
+  }
+
   function clearIdleTimers() {
     if (greetTimer.current) window.clearTimeout(greetTimer.current);
     if (offTimer.current) window.clearTimeout(offTimer.current);
@@ -334,6 +362,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   /** End of a turn: clear busy, and in continuous mode go back to Listening. */
   function finishTurn() {
+    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = true; });
     busyRef.current = false;
     setBusy(false);
     setHearing(false);
@@ -362,9 +391,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       return;
     }
     const token = ++speakToken.current;
-    window.speechSynthesis.cancel();
-    // Stop recognition while we talk; the mic stream stays open (no track.stop) for barge-in energy.
-    stopRecognition();
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    if (synth.paused) synth.resume();
+    // Release the mic BEFORE playback: SR stopped + recRef cleared. Desktop keeps its single GUM stream for barge-in energy.
+    releaseRecognitionForPlayback();
     hearingRef.current = false;
     setSpeaking(true);
     const done = () => {
@@ -373,24 +404,37 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       finishTurn();
       onDone?.();
     };
-    const v = pickVoice(voice);
     const chunks = speechChunks(text);
-    chunks.forEach((chunk, i) => {
-      const u = new SpeechSynthesisUtterance(chunk);
-      if (v) {
-        u.voice = v;
-        u.lang = v.lang;
-      }
-      u.rate = 1;
-      u.pitch = voice === "male" ? 0.92 : 1;
-      if (i === 0) u.onstart = () => {
-        if (token !== speakToken.current) return;
-        setSpeaking(true);
-        onStart?.();
-      };
-      if (i === chunks.length - 1) u.onend = done;
-      u.onerror = done;
-      window.speechSynthesis.speak(u);
+    withVoice((v) => {
+      if (token !== speakToken.current) return;
+      if (!v) console.error("[voice] no SpeechSynthesis voice available; using default");
+      synth.cancel();
+      chunks.forEach((chunk, i) => {
+        const u = new SpeechSynthesisUtterance(chunk);
+        if (v) {
+          u.voice = v;
+          u.lang = v.lang;
+        }
+        u.volume = 1;
+        u.rate = 1;
+        u.pitch = voice === "male" ? 0.92 : 1;
+        if (i === 0) u.onstart = () => {
+          if (token !== speakToken.current) return;
+          setSpeaking(true);
+          onStart?.();
+        };
+        if (i === chunks.length - 1) u.onend = done;
+        u.onerror = (e) => {
+          console.error("[voice] speechSynthesis utterance error", e.error, e);
+          done();
+        };
+        try {
+          synth.speak(u);
+        } catch (err) {
+          console.error("[voice] speechSynthesis.speak failed", err);
+          done();
+        }
+      });
     });
   }
 
