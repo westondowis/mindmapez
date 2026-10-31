@@ -71,3 +71,9 @@ export function rmsOf(samples: ArrayLike<number>): number {
   }
   return Math.sqrt(sum / samples.length);
 }
+/** Elevated RMS required to barge in while the AI is speaking (speaker echo must not trip it). */
+export const BARGE_RMS_THRESHOLD = 0.14;
+/** Elevated energy must persist this long before it counts as a barge-in. */
+export const BARGE_HOLD_MS = 220;
+/** Minimum spacing between visible voice phase changes (prevents button flicker). */
+export const STATE_DEBOUNCE_MS = 250;

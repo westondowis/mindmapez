@@ -21,6 +21,9 @@ import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import {
   AUTO_OFF_MS,
+  BARGE_HOLD_MS,
+  BARGE_RMS_THRESHOLD,
+  STATE_DEBOUNCE_MS,
   CANCEL_CUE,
   COMPLETION_CUE,
   GREETING_DELAY_MS,
@@ -74,10 +77,21 @@ function speechChunks(text: string): string[] {
 export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const [voice, setVoice] = useState<VoiceChoice>("female");
-  const [hearing, setHearing] = useState(false);
+  type Phase = "idle" | "listening" | "thinking" | "speaking";
+  const [phase, setPhaseState] = useState<Phase>("idle");
+  const hearing = phase === "listening";
+  const busy = phase === "thinking" || phase === "speaking";
+  const hearingRef = useRef(false);
+  const phaseAt = useRef(0);
+  const phaseTimer = useRef<number | null>(null);
+  /** Single persistent mic stream for the whole voice session (getUserMedia is called once). */
+  const streamRef = useRef<MediaStream | null>(null);
+  const micPending = useRef<Promise<void> | null>(null);
+  const isStartingRef = useRef(false);
+  const bargingRef = useRef(false);
+  const restartTimer = useRef<number | null>(null);
   const [line, setLine] = useState("");
   const [reply, setReply] = useState("");
-  const [busy, setBusy] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const continuousRef = useRef(false);
   const busyRef = useRef(false);
@@ -113,10 +127,43 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     return () => {
       window.speechSynthesis?.removeEventListener?.("voiceschanged", warm);
       window.speechSynthesis?.cancel();
-      stopMic();
+      releaseMic();
       clearIdleTimers();
+      if (phaseTimer.current) window.clearTimeout(phaseTimer.current);
+      if (restartTimer.current) window.clearTimeout(restartTimer.current);
     };
   }, []);
+
+  /** Visible phase derived from refs; UI changes are spaced >= STATE_DEBOUNCE_MS apart (logic refs stay immediate). */
+  function syncPhase() {
+    const apply = () => {
+      phaseTimer.current = null;
+      phaseAt.current = performance.now();
+      const next: Phase = speakingRef.current ? "speaking" : busyRef.current ? "thinking" : hearingRef.current ? "listening" : "idle";
+      setPhaseState(next);
+    };
+    const wait = STATE_DEBOUNCE_MS - (performance.now() - phaseAt.current);
+    if (phaseTimer.current) return; // a pending apply will read the latest refs
+    if (wait <= 0) apply();
+    else phaseTimer.current = window.setTimeout(apply, wait);
+  }
+  function setHearing(on: boolean) {
+    hearingRef.current = on;
+    syncPhase();
+  }
+  function setBusy(_on: boolean) {
+    syncPhase();
+  }
+  function setSpeaking(on: boolean) {
+    speakingRef.current = on;
+    onSpeaking(on);
+    syncPhase();
+  }
+  function stopRecognition() {
+    if (restartTimer.current) window.clearTimeout(restartTimer.current);
+    restartTimer.current = null;
+    try { recRef.current?.stop(); } catch { /* already stopped */ }
+  }
 
   function clearIdleTimers() {
     if (greetTimer.current) window.clearTimeout(greetTimer.current);
@@ -131,66 +178,87 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     greeted.current = false;
   }
 
-  /** Open the live mic and watch its RMS energy every frame (runs during Listening AND Speaking). */
-  async function startMic() {
-    if (mic.current || !navigator.mediaDevices?.getUserMedia) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      if (!openRef.current) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new Ctx();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
-      ctx.createMediaStreamSource(stream).connect(analyser);
-      const buf = new Uint8Array(analyser.fftSize);
-      const loop = () => {
-        if (!mic.current) return;
-        analyser.getByteTimeDomainData(buf);
-        const now = performance.now();
-        if (rmsOf(buf) >= SPEECH_RMS_THRESHOLD) {
-          loudSince.current ??= now;
-          if (now - loudSince.current >= SPEECH_HOLD_MS) {
-            onUserSpeech();
-            if (speakingRef.current) bargeIn();
-          }
-        } else {
-          loudSince.current = null;
+  /** Acquire the mic ONCE per voice session and watch its RMS energy every frame (Listening AND Speaking). */
+  function ensureMic(): Promise<void> {
+    if (streamRef.current || mic.current) return Promise.resolve();
+    if (micPending.current) return micPending.current;
+    if (!navigator.mediaDevices?.getUserMedia) return Promise.resolve();
+    micPending.current = (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+        if (!openRef.current) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
         }
-        mic.current.raf = window.requestAnimationFrame(loop);
-      };
-      mic.current = { stream, ctx, analyser, raf: window.requestAnimationFrame(loop) };
-    } catch (err) {
-      console.error("[voice] mic energy monitor unavailable", err);
-    }
+        streamRef.current = stream;
+        const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        // iOS often starts the context suspended after await; resume from this user-gesture chain.
+        void ctx.resume().catch(() => {});
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        const buf = new Uint8Array(analyser.fftSize);
+        const loop = () => {
+          if (!mic.current) return;
+          analyser.getByteTimeDomainData(buf);
+          const now = performance.now();
+          const rms = rmsOf(buf);
+          // Echo shield: while the AI talks, only clearly-louder-than-speaker energy, held longer, barges in.
+          const speaking = speakingRef.current;
+          const threshold = speaking ? BARGE_RMS_THRESHOLD : SPEECH_RMS_THRESHOLD;
+          const hold = speaking ? BARGE_HOLD_MS : SPEECH_HOLD_MS;
+          if (rms >= threshold) {
+            loudSince.current ??= now;
+            if (now - loudSince.current >= hold) {
+              if (speaking) bargeIn();
+              else onUserSpeech();
+            }
+          } else {
+            loudSince.current = null;
+          }
+          mic.current.raf = window.requestAnimationFrame(loop);
+        };
+        mic.current = { stream, ctx, analyser, raf: window.requestAnimationFrame(loop) };
+      } catch (err) {
+        console.error("[voice] mic energy monitor unavailable", err);
+      } finally {
+        micPending.current = null;
+      }
+    })();
+    return micPending.current;
   }
 
-  function stopMic() {
+  /** The ONLY place tracks are stopped: X close, auto-off close, or unmount. */
+  function releaseMic() {
     const m = mic.current;
+    const stream = streamRef.current;
     mic.current = null;
+    streamRef.current = null;
     loudSince.current = null;
-    if (!m) return;
-    window.cancelAnimationFrame(m.raf);
-    m.stream.getTracks().forEach((t) => t.stop());
-    void m.ctx.close().catch(() => {});
+    if (m) {
+      window.cancelAnimationFrame(m.raf);
+      void m.ctx.close().catch(() => {});
+    }
+    stream?.getTracks().forEach((t) => t.stop());
   }
 
   /** User talked over the AI: cut speech instantly, drop the queue, go back to Listening. */
   function bargeIn() {
+    if (bargingRef.current) return;
+    bargingRef.current = true;
     speakToken.current++;
-    speakingRef.current = false;
     window.speechSynthesis?.pause();
     window.speechSynthesis?.cancel();
     bargedIn.current = true;
-    onSpeaking(false);
+    onUserSpeech();
     busyRef.current = false;
-    setBusy(false);
+    setSpeaking(false);
     loudSince.current = null;
-    listen();
+    listen({ barge: true });
+    bargingRef.current = false;
   }
 
   /** End of a turn: clear busy, and in continuous mode go back to Listening. */
@@ -224,10 +292,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     }
     const token = ++speakToken.current;
     window.speechSynthesis.cancel();
+    // Stop recognition while we talk; the mic stream stays open (no track.stop) for barge-in energy.
+    stopRecognition();
+    hearingRef.current = false;
+    setSpeaking(true);
     const done = () => {
       if (token !== speakToken.current) return;
-      speakingRef.current = false;
-      onSpeaking(false);
+      setSpeaking(false);
       finishTurn();
       onDone?.();
     };
@@ -243,8 +314,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       u.pitch = voice === "male" ? 0.92 : 1;
       if (i === 0) u.onstart = () => {
         if (token !== speakToken.current) return;
-        speakingRef.current = true;
-        onSpeaking(true);
+        setSpeaking(true);
       };
       if (i === chunks.length - 1) u.onend = done;
       u.onerror = done;
@@ -343,21 +413,12 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   const handled = useRef(false);
 
-  function listen() {
-    if (busyRef.current) return;
-    try {
-      if (window.speechSynthesis) {
-        if (window.speechSynthesis.speaking) bargedIn.current = true;
-        speakToken.current++;
-        speakingRef.current = false;
-        window.speechSynthesis.cancel();
-        const prime = new SpeechSynthesisUtterance(" ");
-        prime.volume = 0;
-        window.speechSynthesis.speak(prime);
-      }
-    } catch {
-      // speech output unavailable: replies still show as text
-    }
+  function listen(opts: { barge?: boolean } = {}) {
+    if (!openRef.current || busyRef.current || isStartingRef.current) return;
+    if (speakingRef.current && !opts.barge) return;
+    if (restartTimer.current) window.clearTimeout(restartTimer.current);
+    restartTimer.current = null;
+    void ensureMic();
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       setReply("Voice input is not available in this browser.");
@@ -382,6 +443,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       void handle(buffer.text.trim());
     };
     rec.onresult = (e) => {
+      // Echo shield: never act on transcripts heard while the AI is talking.
+      if (speakingRef.current || recRef.current !== rec) return;
       // Any speech at all cancels the greeting and auto-off timers.
       onUserSpeech();
       // Show interim text, but only act on finalised results (partials caused repeat replies).
@@ -399,19 +462,34 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       if (silence.current) window.clearTimeout(silence.current);
       if (buffer.text || interim.trim()) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
     };
-    rec.onerror = () => { setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
+    const scheduleRestart = (fn: () => void) => {
+      if (restartTimer.current) window.clearTimeout(restartTimer.current);
+      restartTimer.current = window.setTimeout(() => {
+        restartTimer.current = null;
+        if (!openRef.current || speakingRef.current || busyRef.current || isStartingRef.current || recRef.current !== rec) return;
+        fn();
+      }, STATE_DEBOUNCE_MS);
+    };
+    rec.onerror = () => { isStartingRef.current = false; setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
     rec.onend = () => {
-      if (!openRef.current || recRef.current !== rec) return;
+      isStartingRef.current = false;
+      if (!openRef.current || recRef.current !== rec || speakingRef.current) return;
       if (!handled.current && buffer.text.trim()) {
         // The browser ended the session mid-thought (a brief pause). Don't dispatch yet:
         // keep the pending 2 s silence timer and resume listening with the text carried over.
         buffer.base = buffer.text;
         if (!silence.current) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
-        try {
-          rec.start();
-        } catch {
-          commit();
-        }
+        // Never restart in a tight loop: wait >= STATE_DEBOUNCE_MS and re-check state.
+        scheduleRestart(() => {
+          if (handled.current) return;
+          isStartingRef.current = true;
+          try {
+            rec.start();
+          } catch {
+            isStartingRef.current = false;
+            commit();
+          }
+        });
         return;
       }
       if (silence.current) window.clearTimeout(silence.current);
@@ -425,12 +503,21 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
             .catch(() => finishTurn());
           return;
         }
-        if (continuousRef.current && !busyRef.current) window.setTimeout(() => restartRef.current(), 300);
+        if (continuousRef.current && !busyRef.current) scheduleRestart(() => listen());
       }
     };
     recRef.current = rec;
-    setHearing(true);
-    rec.start();
+    isStartingRef.current = true;
+    try {
+      rec.start();
+      setHearing(true);
+    } catch (err) {
+      console.error("[voice] recognition start failed", err);
+      setHearing(false);
+    } finally {
+      // Release the lock after the start call settles (onend/onerror also clear it).
+      queueMicrotask(() => { isStartingRef.current = false; });
+    }
   }
 
   /** On open: greet only after GREETING_DELAY_MS of silence, then auto-off after AUTO_OFF_MS more. */
@@ -458,13 +545,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     silence.current = null;
     speakToken.current++;
     speakingRef.current = false;
-    stopMic();
+    stopRecognition();
+    releaseMic();
     greeted.current = false;
     openRef.current = false;
     setOpen(false);
-    onSpeaking(false);
     busyRef.current = false;
-    setBusy(false);
+    setSpeaking(false);
     setHearing(false);
     window.speechSynthesis?.cancel();
     try { recRef.current?.stop(); } catch { /* already stopped */ }
@@ -476,8 +563,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     openRef.current = true;
     greeted.current = false;
     setOpen(true);
+    // One getUserMedia per session, requested from the user's click; recognition starts after.
+    void ensureMic();
     listen();
-    void startMic();
     armGreeting();
   }
 
@@ -545,7 +633,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       </label>
       <button
         type="button"
-        onClick={listen}
+        onClick={() => listen()}
         disabled={busy}
         className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#6a2ca8] py-2 text-sm"
       >

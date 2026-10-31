@@ -1,8 +1,8 @@
 import * as THREE from "three";
 
 /** Shown in the corner of the brain view so you can tell which build is live. */
-// NOTE: Increment this semantic patch version (e.g., v5.7 -> v5.8) on every single feature commit or bug fix.
-export const BRAIN_BUILD = "v5.7";
+// NOTE: Increment this semantic patch version (e.g., v5.8 -> v5.9) on every single feature commit or bug fix.
+export const BRAIN_BUILD = "v5.8";
 
 /** Resting vs hovered sector lightning: pulse = flicker speed multiplier, amp = brightness. */
 export const HOT_REST = { pulse: 1, amp: 1 } as const;
