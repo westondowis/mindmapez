@@ -8,8 +8,9 @@ type SpeechRecognition = {
   start: () => void;
   stop: () => void;
   onresult: ((e: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((e?: { error?: string }) => void) | null;
   onend: (() => void) | null;
+  onstart?: (() => void) | null;
 };
 declare global {
   interface Window {
@@ -20,6 +21,9 @@ declare global {
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import {
+  GREETING_TTS_TIMEOUT_MS,
+  MAX_EMPTY_RESTARTS,
+  SILENT_WAV,
   AUTO_OFF_MS,
   BARGE_HOLD_MS,
   BARGE_RMS_THRESHOLD,
@@ -89,6 +93,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const streamRef = useRef<MediaStream | null>(null);
   const micPending = useRef<Promise<void> | null>(null);
   const isStartingRef = useRef(false);
+  /** True while the user wants the mic open (tap → close/stop). Empty onend restarts only while set. */
+  const wantListenRef = useRef(false);
+  const emptyRestarts = useRef(0);
+  const manualStopRef = useRef<(() => void) | null>(null);
+  const silentAudio = useRef<HTMLAudioElement | null>(null);
   const bargingRef = useRef(false);
   const restartTimer = useRef<number | null>(null);
   const [line, setLine] = useState("");
@@ -122,6 +131,16 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   function primeFromGesture() {
     const ctx = mic.current?.ctx;
     if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
+    // iOS: a play() inside the tap unlocks later programmatic audio. Rejection is harmless.
+    try {
+      const a = (silentAudio.current ??= new Audio(SILENT_WAV));
+      a.muted = true;
+      a.setAttribute("playsinline", "");
+      const p = a.play();
+      if (p) void p.then(() => a.pause()).catch(() => {});
+    } catch {
+      // no HTMLAudioElement support: nothing to unlock
+    }
     // A user tap always gets a clean start, even if a previous session hung mid-start.
     isStartingRef.current = false;
   }
@@ -181,7 +200,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   }, []);
 
   /** Visible phase derived from refs; UI changes are spaced >= STATE_DEBOUNCE_MS apart (logic refs stay immediate). */
-  function syncPhase() {
+  function syncPhase(immediate = false) {
+    if (immediate && phaseTimer.current) {
+      window.clearTimeout(phaseTimer.current);
+      phaseTimer.current = null;
+    }
     const apply = () => {
       phaseTimer.current = null;
       phaseAt.current = performance.now();
@@ -190,7 +213,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     };
     const wait = STATE_DEBOUNCE_MS - (performance.now() - phaseAt.current);
     if (phaseTimer.current) return; // a pending apply will read the latest refs
-    if (wait <= 0) apply();
+    if (immediate || wait <= 0) apply();
     else phaseTimer.current = window.setTimeout(apply, wait);
   }
   function setHearing(on: boolean) {
@@ -332,7 +355,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function speak(text: string, onDone?: () => void) {
+  function speak(text: string, onDone?: () => void, onStart?: () => void) {
     if (!window.speechSynthesis || !speechChunks(text).length) {
       finishTurn();
       onDone?.();
@@ -363,6 +386,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       if (i === 0) u.onstart = () => {
         if (token !== speakToken.current) return;
         setSpeaking(true);
+        onStart?.();
       };
       if (i === chunks.length - 1) u.onend = done;
       u.onerror = done;
@@ -461,7 +485,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   const handled = useRef(false);
 
-  function listen(opts: { barge?: boolean } = {}) {
+  function listen(opts: { barge?: boolean; greet?: boolean } = {}) {
     if (!openRef.current || busyRef.current || isStartingRef.current) return;
     if (speakingRef.current && !opts.barge) return;
     if (restartTimer.current) window.clearTimeout(restartTimer.current);
@@ -517,10 +541,37 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         fn();
       }, STATE_DEBOUNCE_MS);
     };
-    rec.onerror = () => { isStartingRef.current = false; setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
+    rec.onstart = () => {
+      isStartingRef.current = false;
+      if (recRef.current !== rec || !openRef.current) return;
+      // Mic confirmed live: only now may the 3 s greeting timer start.
+      if (opts.greet) armGreeting();
+    };
+    manualStopRef.current = () => {
+      if (recRef.current !== rec) return;
+      if (buffer.text.trim()) { commit(); return; }
+      // Stop with nothing said: back to idle, never thinking.
+      wantListenRef.current = false;
+      if (silence.current) window.clearTimeout(silence.current);
+      silence.current = null;
+      stopRecognition();
+      setHearing(false);
+    };
+    rec.onerror = (e) => {
+      isStartingRef.current = false;
+      if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
+        wantListenRef.current = false;
+        setReply("Microphone access was blocked. Allow it in Settings and tap again.");
+      }
+      if (!handled.current) {
+        busyRef.current = false;
+        setHearing(false);
+      }
+    };
     rec.onend = () => {
       isStartingRef.current = false;
       if (!openRef.current || recRef.current !== rec || speakingRef.current) return;
+      if (buffer.text.trim()) emptyRestarts.current = 0;
       if (!handled.current && buffer.text.trim()) {
         // The browser ended the session mid-thought (a brief pause). Don't dispatch yet:
         // keep the pending 2 s silence timer and resume listening with the text carried over.
@@ -541,8 +592,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       }
       if (silence.current) window.clearTimeout(silence.current);
       if (!handled.current) {
-        setHearing(false);
-        if (draft.current.length && !busyRef.current) {
+        if (draft.current.length && !busyRef.current && !wantListenRef.current) {
+          setHearing(false);
           busyRef.current = true;
           setBusy(true);
           void flushDraft()
@@ -550,7 +601,15 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
             .catch(() => finishTurn());
           return;
         }
-        if (continuousRef.current && !busyRef.current) scheduleRestart(() => listen());
+        // Empty transcript guard: nothing said → never handle()/thinking. Keep listening while wanted.
+        if ((wantListenRef.current || continuousRef.current) && !busyRef.current && emptyRestarts.current < MAX_EMPTY_RESTARTS) {
+          emptyRestarts.current++;
+          hearingRef.current = true;
+          scheduleRestart(() => listen());
+        } else {
+          wantListenRef.current = false;
+          setHearing(false);
+        }
       }
     };
     recRef.current = rec;
@@ -558,7 +617,10 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     try {
       // Synchronous in the caller's stack: from a tap this satisfies iOS's user-gesture rule.
       rec.start();
-      setHearing(true);
+      hearingRef.current = true;
+      syncPhase(true);
+      // Browsers without onstart: treat a non-throwing start() as confirmation.
+      if (opts.greet && !("onstart" in rec)) armGreeting();
     } catch (err) {
       console.error("[voice] recognition start failed", err);
       setHearing(false);
@@ -572,8 +634,23 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   /** Direct tap on "Talk to the brain": resume audio + start recognition synchronously. */
   function onTalkTap() {
+    // Tap while listening = stop: commits only a non-empty transcript.
+    if (hearingRef.current && recRef.current && manualStopRef.current) {
+      manualStopRef.current();
+      return;
+    }
+    beginListening(false);
+  }
+
+  /** Tap → listening, synchronously. Never sets busy/thinking. */
+  function beginListening(greet: boolean) {
     primeFromGesture();
-    listen();
+    wantListenRef.current = true;
+    emptyRestarts.current = 0;
+    busyRef.current = false;
+    hearingRef.current = true;
+    syncPhase(true);
+    listen({ greet });
   }
 
   /** On open: greet only after GREETING_DELAY_MS of silence, then auto-off after AUTO_OFF_MS more. */
@@ -585,13 +662,38 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       greeted.current = true;
       const hi = "Hey, what's up?";
       setReply(hi);
-      speak(hi, () => {
-        if (!openRef.current || !greeted.current) return;
-        offTimer.current = window.setTimeout(() => {
-          offTimer.current = null;
-          if (greeted.current && !busyRef.current) closeVoice();
-        }, AUTO_OFF_MS);
-      });
+      let settled = false;
+      const recover = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(guard);
+        speakToken.current++;
+        window.speechSynthesis?.cancel();
+        busyRef.current = false;
+        setSpeaking(false);
+        if (openRef.current && wantListenRef.current) listen();
+      };
+      // WebKit can silently refuse speech: if it hasn't started in 5 s, drop it and listen again.
+      const guard = window.setTimeout(recover, GREETING_TTS_TIMEOUT_MS);
+      try {
+        speak(
+          hi,
+          () => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(guard);
+            if (!openRef.current || !greeted.current) return;
+            offTimer.current = window.setTimeout(() => {
+              offTimer.current = null;
+              if (greeted.current && !busyRef.current) closeVoice();
+            }, AUTO_OFF_MS);
+          },
+          () => window.clearTimeout(guard),
+        );
+      } catch (err) {
+        console.error("[voice] greeting playback failed", err);
+        recover();
+      }
     }, GREETING_DELAY_MS);
   }
 
@@ -604,6 +706,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     stopRecognition();
     releaseMic();
     greeted.current = false;
+    wantListenRef.current = false;
+    manualStopRef.current = null;
     openRef.current = false;
     setOpen(false);
     busyRef.current = false;
@@ -619,10 +723,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     openRef.current = true;
     greeted.current = false;
     setOpen(true);
-    primeFromGesture();
-    // recognition.start() runs synchronously in this tap; ensureMic (desktop only) follows, unawaited.
-    listen();
-    armGreeting();
+    // Sync in this tap: listening phase, audio unlock, recognition.start(). Greeting arms on onstart.
+    beginListening(true);
   }
 
   restartRef.current = () => { if (openRef.current) listen(); };
@@ -693,7 +795,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         disabled={busy}
         className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#6a2ca8] py-2 text-sm"
       >
-        <Mic className="size-4" /> {hearing ? "Listening…" : busy ? "Thinking…" : "Talk to the brain"}
+        <Mic className="size-4" /> {hearing ? "Listening…" : phase === "speaking" ? "Speaking…" : phase === "thinking" ? "Thinking…" : "Talk to the brain"}
       </button>
       <p className="mt-1 hidden text-[10px] leading-tight text-white/45 sm:block">Alt+V to close · Alt+C toggles continuous</p>
       {line ? <p className="mt-2 text-[11px] text-white/60">You: {line}</p> : null}

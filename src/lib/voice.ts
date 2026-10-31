@@ -96,3 +96,10 @@ export function preferRecognitionOnly(): boolean {
   const w = window as unknown as { webkitSpeechRecognition?: unknown };
   return isIOSWebKit() && !!w.webkitSpeechRecognition;
 }
+
+/** Max wait for the greeting TTS to start before falling back to listening. */
+export const GREETING_TTS_TIMEOUT_MS = 5000;
+/** Cap on consecutive empty-session recognition restarts (~1 min) before going idle. */
+export const MAX_EMPTY_RESTARTS = 40;
+/** 1-sample silent WAV used to unlock iOS audio playback inside the tap. */
+export const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
