@@ -21,6 +21,9 @@ import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import { CANCEL_CUE, COMPLETION_CUE, extractKeywords, type ReviewAction } from "@/lib/voice";
 
+/** Silence after speech before the thought is sent (lets people pause to think). */
+const VAD_SILENCE_MS = 2000;
+
 type VoiceChoice = "male" | "female";
 
 const MALE_NAMES = /daniel|alex|aaron|arthur|fred|david|james|guy|gordon|oliver|rishi|tom|evan|nathan|google uk english male|male/i;
@@ -70,6 +73,10 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [continuous, setContinuous] = useState(false);
   const continuousRef = useRef(false);
   const busyRef = useRef(false);
+  const idle = useRef<number | null>(null);
+  const greeted = useRef(false);
+  const actions = useRef({ toggle: () => {}, toggleContinuous: () => {} });
+  const openRef = useRef(false);
   const draft = useRef<string[]>([]);
   const bargedIn = useRef(false);
   const restartRef = useRef<() => void>(() => {});
@@ -100,8 +107,23 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     busyRef.current = false;
     setBusy(false);
     setHearing(false);
-    if (continuousRef.current) window.setTimeout(() => restartRef.current(), 300);
+    if (continuousRef.current || greeted.current) window.setTimeout(() => restartRef.current(), 300);
   }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.code === "KeyV") {
+        e.preventDefault();
+        actions.current.toggle();
+      } else if (e.code === "KeyC") {
+        e.preventDefault();
+        actions.current.toggleContinuous();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function speak(text: string) {
     if (!window.speechSynthesis || !speechChunks(text).length) {
@@ -239,7 +261,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     handled.current = false;
     const rec = new SR();
     rec.lang = "en-US";
-    rec.continuous = continuousRef.current;
+    // Always stream continuously: our own 2 s silence timer decides when the thought is over.
+    rec.continuous = true;
     rec.interimResults = true;
     const buffer = { text: "" };
     const commit = () => {
@@ -251,6 +274,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       void handle(buffer.text.trim());
     };
     rec.onresult = (e) => {
+      // Any speech at all cancels the inactivity pacing.
+      if (idle.current) window.clearTimeout(idle.current);
+      greeted.current = false;
       // Show interim text, but only act on finalised results (partials caused repeat replies).
       let finalText = "";
       let interim = "";
@@ -263,7 +289,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       buffer.text = finalText.trim();
       setLine((finalText + interim).trim());
       if (silence.current) window.clearTimeout(silence.current);
-      if (buffer.text) silence.current = window.setTimeout(commit, 1800);
+      if (buffer.text) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
     };
     rec.onerror = () => { setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
     rec.onend = () => {
@@ -285,19 +311,73 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     recRef.current = rec;
     setHearing(true);
     rec.start();
+    // Inactivity pacing: greet after 3 s of silence, power down after 5 more.
+    if (idle.current) window.clearTimeout(idle.current);
+    idle.current = window.setTimeout(() => {
+      if (handled.current || busyRef.current || buffer.text.trim()) return;
+      try { rec.stop(); } catch { /* already stopped */ }
+      if (greeted.current) {
+        closeVoice();
+        return;
+      }
+      greeted.current = true;
+      busyRef.current = true;
+      setBusy(true);
+      const hi = "Hey, what's up?";
+      setReply(hi);
+      speak(hi);
+    }, greeted.current ? 5000 : 3000);
   }
 
-  restartRef.current = listen;
+  function closeVoice() {
+    if (idle.current) window.clearTimeout(idle.current);
+    if (silence.current) window.clearTimeout(silence.current);
+    greeted.current = false;
+    openRef.current = false;
+    setOpen(false);
+    onSpeaking(false);
+    busyRef.current = false;
+    setBusy(false);
+    setHearing(false);
+    window.speechSynthesis?.cancel();
+    try { recRef.current?.stop(); } catch { /* already stopped */ }
+    if (draft.current.length) void flushDraft().catch((e) => console.error("[voice]", e));
+  }
+
+  /** One click (or Alt+V): open the panel and start the microphone straight away. */
+  function openVoice() {
+    openRef.current = true;
+    greeted.current = false;
+    setOpen(true);
+    listen();
+  }
+
+  restartRef.current = () => { if (openRef.current) listen(); };
+  actions.current = {
+    toggle: () => (openRef.current ? closeVoice() : openVoice()),
+    toggleContinuous: () => {
+      const next = !continuousRef.current;
+      continuousRef.current = next;
+      setContinuous(next);
+    },
+  };
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="pointer-events-auto absolute left-3 top-10 z-30 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-xs text-white"
-      >
-        <Mic className="size-3.5" /> Voice
-      </button>
+      <div className="pointer-events-auto absolute left-3 top-10 z-30">
+        <button
+          type="button"
+          onClick={openVoice}
+          className="flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-xs text-white"
+        >
+          <Mic className="size-3.5" /> Voice
+        </button>
+        <p className="mt-1 hidden text-[10px] leading-tight text-white/45 sm:block">
+          Alt+V to launch voice mode
+          <br />
+          Alt+C for continuous conversation
+        </p>
+      </div>
     );
   }
 
@@ -305,13 +385,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     <div className="pointer-events-auto absolute left-3 top-10 z-30 w-[min(100%-1.5rem,18rem)] rounded-2xl border border-[#6a2ca8]/40 bg-black/80 p-3 text-white backdrop-blur-md">
       <div className="flex items-center justify-between">
         <p className="text-xs uppercase tracking-[0.14em] text-[#c9b6ff]">Voice</p>
-        <button type="button" onClick={() => {
-            setOpen(false);
-            onSpeaking(false);
-            window.speechSynthesis?.cancel();
-            try { recRef.current?.stop(); } catch { /* already stopped */ }
-            if (draft.current.length) void flushDraft().catch((e) => console.error("[voice]", e));
-          }} className="text-white/60" aria-label="Close">✕</button>
+        <button type="button" onClick={closeVoice} className="text-white/60" aria-label="Close">✕</button>
       </div>
       <div className="mt-2 flex gap-1">
         {(["female", "male"] as const).map((v) => (
@@ -348,6 +422,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       >
         <Mic className="size-4" /> {hearing ? "Listening…" : busy ? "Thinking…" : "Talk to the brain"}
       </button>
+      <p className="mt-1 hidden text-[10px] leading-tight text-white/45 sm:block">Alt+V to close · Alt+C toggles continuous</p>
       {line ? <p className="mt-2 text-[11px] text-white/60">You: {line}</p> : null}
       {reply ? (
         <p className="mt-1 flex items-start gap-1 text-[12px] leading-snug">
