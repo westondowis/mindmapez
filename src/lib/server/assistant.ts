@@ -6,6 +6,7 @@ import { scoreText } from "@/lib/organize";
 import { grokChat } from "./ai";
 import { ensureUserSettings } from "./seed";
 import type { AssistantMessage } from "@/lib/types";
+import { extractKeywords, parseIntent, verbosityHint } from "@/lib/voice";
 
 export const listAssistant = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
@@ -32,7 +33,7 @@ function dayOf(v: unknown): string {
 }
 
 export const askAssistant = createServerFn({ method: "POST" })
-  .validator((input: { prompt: string }) => input)
+  .validator((input: { prompt: string; voice?: boolean }) => input)
   .middleware([authMiddleware])
   .handler(async ({ context, data }) => {
     const prompt = data.prompt.trim();
@@ -84,12 +85,28 @@ export const askAssistant = createServerFn({ method: "POST" })
       .map((c) => `${c.parent_id ? "  - " : "- "}${c.name}${c.sector_id ? ` [${c.sector_id}]` : ""}`)
       .join("\n");
 
+    let tone = "";
+    if (data.voice) {
+      const rows = await sql<{ turns: number; barge_ins: number; topics_json: string }>`
+        select turns, barge_ins, topics_json from voice_telemetry where user_id = ${context.userId}
+      `;
+      let topics: string[] = [];
+      try {
+        topics = Object.entries(JSON.parse(rows[0]?.topics_json ?? "{}") as Record<string, number>)
+          .filter(([, n]) => n >= 3)
+          .map(([k]) => k);
+      } catch {
+        topics = [];
+      }
+      tone = " " + verbosityHint({ turns: Number(rows[0]?.turns ?? 0), bargeIns: Number(rows[0]?.barge_ins ?? 0), topics }, prompt);
+    }
+
     const ai = await grokChat(
       [
         {
           role: "system",
           content:
-            "You are the MindMesh assistant. You know this person's memory network and the branch map below. When asked where to put something, name a real branch from the map. If none fits, say so and offer to create one. Be concise. No markdown headings.\n\nBranch map:\n" + (taxonomy || "(no branches yet)"),
+            "You are the MindMesh assistant. You know this person's memory network and the branch map below. When asked where to put something, name a real branch from the map. If none fits, say so and offer to create one. Be concise. No markdown headings.\n\nBranch map:\n" + (taxonomy || "(no branches yet)") + tone,
         },
         ...history
           .reverse()
@@ -143,14 +160,15 @@ export const voiceIngest = createServerFn({ method: "POST" })
     const best = scored[0]?.score ? scored[0].c : null;
     const sentences = raw.split(/(?<=[.!?])\s+/).filter(Boolean);
     const keyPoints = sentences.slice(0, 4).map((x) => x.trim());
-    const tags = Array.from(new Set(words.filter((w) => w.length > 4))).slice(0, 6);
-    const thin = raw.split(/\s+/).length < 8 || !/[.?!]/.test(raw);
+    const tags = extractKeywords(raw);
+    const thin = false;
     return {
       ok: true as const,
       raw,
       keyPoints,
       tags,
       clarify: thin ? "Can you say a bit more about what you want to keep from that?" : null,
+      action: parseIntent(raw),
       suggested: best ? { id: best.id, name: best.name, sectorId: best.sector_id } : null,
       branches: concepts.slice(0, 12).map((c) => c.name),
     };

@@ -18,7 +18,8 @@ declare global {
   }
 }
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
-import { createMemory } from "@/lib/server/memories";
+import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
+import { CANCEL_CUE, COMPLETION_CUE, extractKeywords } from "@/lib/voice";
 
 type VoiceChoice = "male" | "female";
 
@@ -67,9 +68,10 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [continuous, setContinuous] = useState(false);
-  const pending = useRef<{ raw: string; keyPoints: string[]; tags: string[]; conceptId: string | null; name: string | null } | null>(null);
   const continuousRef = useRef(false);
   const busyRef = useRef(false);
+  const draft = useRef<string[]>([]);
+  const bargedIn = useRef(false);
   const restartRef = useRef<() => void>(() => {});
   const silence = useRef<number | null>(null);
   const recRef = useRef<SpeechRecognition | null>(null);
@@ -126,25 +128,51 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   async function handle(text: string) {
     const clean = text.trim();
-    if (!clean) return;
+    if (!clean) {
+      finishTurn();
+      return;
+    }
     setLine(clean);
     busyRef.current = true;
     setBusy(true);
+    const bargeIn = bargedIn.current;
+    bargedIn.current = false;
     try {
-      if (pending.current && /^(yes|yeah|save it|do it|confirm|i'?m done|im done|store this|that is all|that'?s all|no,? i'?m done|save this)/i.test(clean)) {
-        const p = pending.current;
-        const body = p.raw + "\n\nKey points:\n" + p.keyPoints.map((k) => "• " + k).join("\n");
-        await createMemory({ data: { title: p.raw.slice(0, 80), body, transcript: p.raw, memoryType: "voice", tags: p.tags, conceptId: p.conceptId } });
-        void qc.invalidateQueries({ queryKey: ["graph"] });
-        pending.current = null;
-        const said = p.name ? `Saved under ${p.name}.` : "Saved as a new memory.";
+      // Completion cue: queue what we gathered for review right away. No more questions.
+      if (COMPLETION_CUE.test(clean)) {
+        const raw = draft.current.join(" ").trim();
+        draft.current = [];
+        if (!raw) {
+          const said = "There is nothing to store yet. Tell me what to remember.";
+          setReply(said);
+          speak(said);
+          return;
+        }
+        const plan = await voiceIngest({ data: { transcript: raw } });
+        if (!plan.ok) throw new Error(plan.error);
+        const q = await queueReview({
+          data: {
+            raw: plan.raw,
+            keyPoints: plan.keyPoints,
+            keywords: plan.tags,
+            action: plan.action,
+            conceptId: plan.suggested?.id ?? null,
+            conceptName: plan.suggested?.name ?? null,
+            suggestedName: plan.suggested?.name ?? null,
+          },
+        });
+        if (!q.ok) throw new Error(q.error);
+        void qc.invalidateQueries({ queryKey: ["reviews"] });
+        const said = plan.suggested
+          ? `Stored for review under ${plan.suggested.name}.`
+          : "Stored for review as a new memory.";
         setReply(said);
         speak(said);
         return;
       }
-      if (pending.current && /^(no|cancel|don't|do not)/i.test(clean)) {
-        pending.current = null;
-        const said = "Okay, I did not save that.";
+      if (CANCEL_CUE.test(clean)) {
+        draft.current = [];
+        const said = "Okay, I discarded that.";
         setReply(said);
         speak(said);
         return;
@@ -152,21 +180,15 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       const remember = clean.match(/^(remember|save|add a memory|note that|i want to remember)\s+(.+)/i);
       const note = remember?.[2] ?? (clean.split(/\s+/).length > 18 ? clean : null);
       if (note) {
-        const plan = await voiceIngest({ data: { transcript: note } });
-        if (!plan.ok) throw new Error(plan.error);
-        if (plan.clarify) {
-          setReply(plan.clarify);
-          speak(plan.clarify);
-          return;
-        }
-        pending.current = { raw: plan.raw, keyPoints: plan.keyPoints, tags: plan.tags, conceptId: plan.suggested?.id ?? null, name: plan.suggested?.name ?? null };
-        const where = plan.suggested ? `I would put this under ${plan.suggested.name}.` : "I do not see a matching branch. I can save it unfiled.";
-        const said = `${where} Tags: ${plan.tags.slice(0, 3).join(", ") || "none"}. Say yes to save.`;
+        draft.current.push(note);
+        void recordVoiceTurn({ data: { bargeIn, keywords: extractKeywords(note) } }).catch(() => {});
+        const said = "Got it. Keep going, or say I'm done to store it.";
         setReply(said);
         speak(said);
         return;
       }
-      const res = await askAssistant({ data: { prompt: clean } });
+      void recordVoiceTurn({ data: { bargeIn, keywords: extractKeywords(clean) } }).catch(() => {});
+      const res = await askAssistant({ data: { prompt: clean, voice: true } });
       const said = res.ok ? res.content : "I could not reach the brain just now.";
       setReply(said);
       speak(said);
@@ -185,6 +207,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     if (busyRef.current) return;
     try {
       if (window.speechSynthesis) {
+        if (window.speechSynthesis.speaking) bargedIn.current = true;
         window.speechSynthesis.cancel();
         const prime = new SpeechSynthesisUtterance(" ");
         prime.volume = 0;
@@ -214,16 +237,29 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       void handle(buffer.text.trim());
     };
     rec.onresult = (e) => {
-      let text = "";
-      for (let i = 0; i < e.results.length; i++) text += e.results[i]?.[0]?.transcript ?? "";
-      buffer.text = text;
-      setLine(text);
+      // Show interim text, but only act on finalised results (partials caused repeat replies).
+      let finalText = "";
+      let interim = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const r = e.results[i];
+        const t = r?.[0]?.transcript ?? "";
+        if (r?.isFinal) finalText += t + " ";
+        else interim += t;
+      }
+      buffer.text = finalText.trim();
+      setLine((finalText + interim).trim());
       if (silence.current) window.clearTimeout(silence.current);
-      const last = e.results[e.results.length - 1];
-      silence.current = window.setTimeout(commit, last?.isFinal ? 700 : 1800);
+      if (buffer.text) silence.current = window.setTimeout(commit, 1800);
     };
     rec.onerror = () => { setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
-    rec.onend = () => { if (!handled.current) setHearing(false); };
+    rec.onend = () => {
+      if (silence.current) window.clearTimeout(silence.current);
+      if (!handled.current && buffer.text.trim()) commit();
+      else if (!handled.current) {
+        setHearing(false);
+        if (continuousRef.current && !busyRef.current) window.setTimeout(() => restartRef.current(), 300);
+      }
+    };
     recRef.current = rec;
     setHearing(true);
     rec.start();

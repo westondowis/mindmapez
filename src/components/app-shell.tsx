@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   CalendarRange,
   Compass,
+  Inbox,
   LayoutDashboard,
   MessageSquareText,
   Network,
@@ -23,6 +24,7 @@ const NAV = [
   { to: "/search", label: "Search", icon: Search },
   { to: "/assistant", label: "Assistant", icon: MessageSquareText },
   { to: "/reflect", label: "Reflect", icon: Sunrise },
+  { to: "/review", label: "Review", icon: Inbox },
 ] as const;
 
 export function AppShell({
