@@ -22,6 +22,7 @@ import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import {
   GREETING_TTS_TIMEOUT_MS,
+  SPEAK_START_TIMEOUT_MS,
   MAX_EMPTY_RESTARTS,
   SILENT_WAV,
   AUTO_OFF_MS,
@@ -122,13 +123,31 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const recRef = useRef<SpeechRecognition | null>(null);
   const qc = useQueryClient();
   const recognitionOnly = useRef(false);
+  /** Latest voice choice for callbacks created earlier (switching voice never touches the mic). */
+  const voiceRef = useRef<VoiceChoice>("female");
+  voiceRef.current = voice;
 
   useEffect(() => {
     recognitionOnly.current = preferRecognitionOnly();
   }, []);
 
+  /**
+   * Safari Audio Session API (iOS 16.4+/17): "playback" and "play-and-record" both ignore the ringer/silent
+   * switch and follow the active route (speaker or Bluetooth). We use play-and-record while capturing and
+   * switch to "playback" for TTS once recognition + mic tracks are released.
+   */
+  function setAudioSession(type: "playback" | "play-and-record" | "auto") {
+    try {
+      const as = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+      if (as && as.type !== type) as.type = type;
+    } catch (err) {
+      console.error("[voice] audioSession.type failed", type, err);
+    }
+  }
+
   /** Must run synchronously inside the tap: wake a suspended AudioContext and clear stale locks. */
   function primeFromGesture() {
+    setAudioSession("play-and-record");
     const ctx = mic.current?.ctx;
     if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
     // iOS: a play() inside the tap unlocks later programmatic audio. Rejection is harmless.
@@ -243,20 +262,22 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     isStartingRef.current = false;
     try { (rec as (SpeechRecognition & { abort?: () => void }) | null)?.abort?.() ?? rec?.stop(); } catch { try { rec?.stop(); } catch { /* already stopped */ } }
     // Recognition-only (iOS) path holds no GUM stream; if any track exists there, mute it (never stop/re-request).
-    if (recognitionOnly.current) streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
+    // Mute (never stop) mic tracks on every platform so the OS leaves telephony mode; restored in finishTurn.
+    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
+    setAudioSession("playback");
   }
 
   /** Resolve a real voice; on iOS getVoices() is often empty until voiceschanged fires once. */
   function withVoice(cb: (v: SpeechSynthesisVoice | null) => void) {
     const synth = window.speechSynthesis;
-    const v = pickVoice(voice);
+    const v = pickVoice(voiceRef.current);
     if (v || synth.getVoices().length) return cb(v ?? synth.getVoices()[0] ?? null);
     let fired = false;
     const go = () => {
       if (fired) return;
       fired = true;
       synth.removeEventListener?.("voiceschanged", go);
-      cb(pickVoice(voice) ?? synth.getVoices()[0] ?? null);
+      cb(pickVoice(voiceRef.current) ?? synth.getVoices()[0] ?? null);
     };
     synth.addEventListener?.("voiceschanged", go);
     window.setTimeout(go, 1000);
@@ -363,6 +384,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   /** End of a turn: clear busy, and in continuous mode go back to Listening. */
   function finishTurn() {
     streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = true; });
+    if (openRef.current) setAudioSession("play-and-record");
     busyRef.current = false;
     setBusy(false);
     setHearing(false);
@@ -405,6 +427,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       onDone?.();
     };
     const chunks = speechChunks(text);
+    let started = false;
     withVoice((v) => {
       if (token !== speakToken.current) return;
       if (!v) console.error("[voice] no SpeechSynthesis voice available; using default");
@@ -417,8 +440,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         }
         u.volume = 1;
         u.rate = 1;
-        u.pitch = voice === "male" ? 0.92 : 1;
+        u.pitch = voiceRef.current === "male" ? 0.92 : 1;
         if (i === 0) u.onstart = () => {
+          started = true;
           if (token !== speakToken.current) return;
           setSpeaking(true);
           onStart?.();
@@ -435,6 +459,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           done();
         }
       });
+      // Silent-synth watchdog: WebKit sometimes accepts speak() but never plays. Don't hang in Speaking.
+      window.setTimeout(() => {
+        if (started || token !== speakToken.current) return;
+        console.error("[voice] speechSynthesis produced no onstart within 1.5s; ending turn (no server TTS fallback configured)");
+        synth.cancel();
+        done();
+      }, SPEAK_START_TIMEOUT_MS);
     });
   }
 
@@ -547,7 +578,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     rec.continuous = true;
     rec.interimResults = true;
     // `base` carries text across recognition sessions the browser ends on its own.
-    const buffer = { text: "", base: "" };
+    const buffer = { text: "", base: "", interim: "" };
     const commit = () => {
       if (handled.current || !buffer.text.trim()) return;
       handled.current = true;
@@ -572,6 +603,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         else interim += t;
       }
       buffer.text = `${buffer.base} ${finalText}`.trim();
+      buffer.interim = interim.trim();
       setLine(`${buffer.base} ${finalText}${interim}`.trim());
       // Re-arm on every result (interim too): only a full VAD_SILENCE_MS of quiet ends the thought.
       if (silence.current) window.clearTimeout(silence.current);
@@ -615,6 +647,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     rec.onend = () => {
       isStartingRef.current = false;
       if (!openRef.current || recRef.current !== rec || speakingRef.current) return;
+      // Safari can end a session without finalising the last words: keep them as final text.
+      if (!handled.current && buffer.interim) {
+        buffer.text = `${buffer.text} ${buffer.interim}`.trim();
+        buffer.interim = "";
+      }
       if (buffer.text.trim()) emptyRestarts.current = 0;
       if (!handled.current && buffer.text.trim()) {
         // The browser ended the session mid-thought (a brief pause). Don't dispatch yet:

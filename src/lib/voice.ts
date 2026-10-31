@@ -103,3 +103,6 @@ export const GREETING_TTS_TIMEOUT_MS = 5000;
 export const MAX_EMPTY_RESTARTS = 40;
 /** 1-sample silent WAV used to unlock iOS audio playback inside the tap. */
 export const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
+
+/** If speechSynthesis has not fired onstart by now, treat it as silent and end the turn. */
+export const SPEAK_START_TIMEOUT_MS = 1500;
