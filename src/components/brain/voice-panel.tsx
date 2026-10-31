@@ -69,6 +69,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [continuous, setContinuous] = useState(false);
   const pending = useRef<{ raw: string; keyPoints: string[]; tags: string[]; conceptId: string | null; name: string | null } | null>(null);
   const continuousRef = useRef(false);
+  const busyRef = useRef(false);
+  const restartRef = useRef<() => void>(() => {});
   const silence = useRef<number | null>(null);
   const recRef = useRef<SpeechRecognition | null>(null);
   const qc = useQueryClient();
@@ -91,8 +93,19 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     };
   }, []);
 
+  /** End of a turn: clear busy, and in continuous mode go back to Listening. */
+  function finishTurn() {
+    busyRef.current = false;
+    setBusy(false);
+    setHearing(false);
+    if (continuousRef.current) window.setTimeout(() => restartRef.current(), 300);
+  }
+
   function speak(text: string) {
-    if (!window.speechSynthesis) return;
+    if (!window.speechSynthesis || !speechChunks(text).length) {
+      finishTurn();
+      return;
+    }
     window.speechSynthesis.cancel();
     const v = pickVoice(voice);
     const chunks = speechChunks(text);
@@ -105,8 +118,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       u.rate = 1;
       u.pitch = voice === "male" ? 0.92 : 1;
       if (i === 0) u.onstart = () => onSpeaking(true);
-      if (i === chunks.length - 1) u.onend = () => { onSpeaking(false); setBusy(false); setHearing(false); if (continuousRef.current) window.setTimeout(() => listen(), 250); };
-      u.onerror = () => { onSpeaking(false); setBusy(false); setHearing(false); };
+      if (i === chunks.length - 1) u.onend = () => { onSpeaking(false); finishTurn(); };
+      u.onerror = () => { onSpeaking(false); finishTurn(); };
       window.speechSynthesis.speak(u);
     });
   }
@@ -115,6 +128,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     const clean = text.trim();
     if (!clean) return;
     setLine(clean);
+    busyRef.current = true;
     setBusy(true);
     try {
       if (pending.current && /^(yes|yeah|save it|do it|confirm|i'?m done|im done|store this|that is all|that'?s all|no,? i'?m done|save this)/i.test(clean)) {
@@ -168,7 +182,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const handled = useRef(false);
 
   function listen() {
-    if (busy) return;
+    if (busyRef.current) return;
     try {
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
@@ -194,6 +208,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     const commit = () => {
       if (handled.current || !buffer.text.trim()) return;
       handled.current = true;
+      if (silence.current) window.clearTimeout(silence.current);
       setHearing(false);
       try { rec.stop(); } catch { /* already stopped */ }
       void handle(buffer.text.trim());
@@ -204,14 +219,17 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       buffer.text = text;
       setLine(text);
       if (silence.current) window.clearTimeout(silence.current);
-      silence.current = window.setTimeout(commit, 1800);
+      const last = e.results[e.results.length - 1];
+      silence.current = window.setTimeout(commit, last?.isFinal ? 700 : 1800);
     };
-    rec.onerror = () => { setHearing(false); setBusy(false); };
+    rec.onerror = () => { setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
     rec.onend = () => { if (!handled.current) setHearing(false); };
     recRef.current = rec;
     setHearing(true);
     rec.start();
   }
+
+  restartRef.current = listen;
 
   if (!open) {
     return (
