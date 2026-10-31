@@ -66,25 +66,54 @@ function rowBelow(index: number, total: number, origin = { x: 0, y: 0 }, gap = 2
   return { x: origin.x - (span * gap) / 2 + index * gap, y: origin.y + drop };
 }
 
+const TREE_GAP_X = 230;
+const TREE_GAP_Y = 270;
+
+/**
+ * Deterministic tidy-tree layout: every subtree gets a horizontal slot as wide as its
+ * leaf count, parents sit centred over their children, and each depth is its own row,
+ * so nodes can never stack. Rows start well below the origin, clear of the Move Up button.
+ */
 function layoutTree(concepts: Concept[], sectorId: string, focusId?: string | null) {
   const positions = new Map<string, { x: number; y: number }>();
-  if (focusId && focusId !== sectorId) {
-    const parent = concepts.find((c) => c.id === focusId);
-    const origin = { x: parent?.positionX ?? 0, y: parent?.positionY ?? 0 };
-    const kids = childrenOf(concepts, focusId);
-    kids.forEach((k, i) => positions.set(k.id, rowBelow(i, kids.length, origin, 220, 280)));
-    return positions;
-  }
-  const primaries = childrenOf(concepts, null, sectorId);
-  primaries.forEach((c, i) => {
-    positions.set(c.id, rowBelow(i, primaries.length, { x: 0, y: 40 }, 230, 260));
-  });
-  const place = (parentId: string) => {
-    const kids = childrenOf(concepts, parentId);
-    kids.forEach((k, i) => positions.set(k.id, rowBelow(i, kids.length, { x: 0, y: 0 }, 190, 240)));
-    kids.forEach((k) => place(k.id));
+  const fin = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? n : 0);
+  const focused = !!focusId && focusId !== sectorId;
+  const parent = focused ? concepts.find((c) => c.id === focusId) : undefined;
+  const origin = focused ? { x: fin(parent?.positionX), y: fin(parent?.positionY) } : { x: 0, y: 40 };
+  const roots = focused ? childrenOf(concepts, focusId!) : childrenOf(concepts, null, sectorId);
+  const seen = new Set<string>();
+  const leaves = (id: string): number => {
+    if (seen.has(id)) return 1;
+    seen.add(id);
+    const kids = childrenOf(concepts, id);
+    return kids.length ? kids.reduce((n, k) => n + leaves(k.id), 0) : 1;
   };
-  primaries.forEach((p) => place(p.id));
+  const place = (id: string, left: number, depth: number, visited: Set<string>): number => {
+    // Returns the slot width used (in leaves). `visited` guards against cyclic parent links.
+    visited.add(id);
+    const kids = childrenOf(concepts, id).filter((k) => !visited.has(k.id));
+    let used = 0;
+    const slots = kids.map((k) => {
+      const w = place(k.id, left + used, depth + 1, visited);
+      const start = left + used;
+      used += w;
+      return { start, w };
+    });
+    const width = Math.max(used, 1);
+    const centre = slots.length ? left + used / 2 : left + 0.5;
+    positions.set(id, { x: origin.x + centre * TREE_GAP_X, y: origin.y + depth * TREE_GAP_Y });
+    return width;
+  };
+  const visited = new Set<string>();
+  const total = roots.reduce((n, r) => n + (seen.clear(), leaves(r.id)), 0) || 1;
+  let cursor = -total / 2;
+  for (const r of roots) {
+    cursor += place(r.id, cursor, 1, visited);
+  }
+  // Final guard: never hand back a non-finite coordinate.
+  for (const [id, p] of positions) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) positions.delete(id);
+  }
   return positions;
 }
 
