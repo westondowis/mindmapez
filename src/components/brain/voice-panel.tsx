@@ -150,7 +150,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           action: plan.action,
           conceptId: plan.suggested?.id ?? null,
           conceptName: plan.suggested?.name ?? null,
-          suggestedName: plan.suggested?.name ?? null,
+          suggestedName: plan.action === "memory" ? (plan.suggested?.name ?? null) : plan.newName,
         };
       }
     } catch (err) {
@@ -162,7 +162,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       throw new Error(q.error);
     }
     void qc.invalidateQueries({ queryKey: ["reviews"] });
-    return payload.suggestedName ? `Stored for review under ${payload.suggestedName}.` : "Stored for review as a new memory.";
+    return payload.conceptName ? `Stored for review under ${payload.conceptName}.` : "Stored for review as a new memory.";
   }
 
   async function handle(text: string) {

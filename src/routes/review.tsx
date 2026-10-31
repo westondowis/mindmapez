@@ -22,8 +22,8 @@ function ReviewRoute() {
 }
 
 const ACTIONS: { value: ReviewAction; label: string }[] = [
-  { value: "memory", label: "Save as memory" },
-  { value: "branch", label: "Create new branch" },
+  { value: "memory", label: "Add memory to existing branch" },
+  { value: "branch", label: "Create top-level branch" },
   { value: "sub-branch", label: "Create sub-branch" },
 ];
 
@@ -77,7 +77,9 @@ function ReviewCard({
 }) {
   const [action, setAction] = useState<ReviewAction>(item.action);
   const [target, setTarget] = useState<string>(item.conceptId ?? "");
-  const [name, setName] = useState(item.keywords[0] ? item.keywords[0][0]!.toUpperCase() + item.keywords[0].slice(1) : "New branch");
+  const [name, setName] = useState(item.suggestedName ?? (item.keywords[0] ? item.keywords[0][0]!.toUpperCase() + item.keywords[0].slice(1) : "New branch"));
+  const [title, setTitle] = useState(item.keyPoints[0]?.slice(0, 80) || item.raw.slice(0, 80));
+  const [points, setPoints] = useState(item.keyPoints.join("\n"));
 
   const approve = useMutation({
     mutationFn: async () => {
@@ -89,9 +91,10 @@ function ReviewCard({
         if (!made.ok) throw new Error(made.error);
         conceptId = (made.branch as { id: string }).id;
       }
-      const body = item.raw + (item.keyPoints.length ? "\n\nKey points:\n" + item.keyPoints.map((k) => "• " + k).join("\n") : "");
+      const kp = points.split("\n").map((k) => k.trim()).filter(Boolean);
+      const body = item.raw + (kp.length ? "\n\nKey points:\n" + kp.map((k) => "• " + k).join("\n") : "");
       const saved = await createMemory({
-        data: { title: item.raw.slice(0, 80), body, transcript: item.raw, memoryType: "voice", tags: item.keywords, conceptId },
+        data: { title: title.trim() || item.raw.slice(0, 80), body, transcript: item.raw, memoryType: "voice", tags: item.keywords, conceptId },
       });
       if (saved && "ok" in saved && saved.ok === false) throw new Error(saved.error);
       await resolveReview({ data: { id: item.id, status: "approved" } });
@@ -113,14 +116,12 @@ function ReviewCard({
 
   return (
     <section className="rounded-2xl border border-border bg-card/70 p-4">
-      <p className="text-sm leading-relaxed">{item.raw}</p>
-      {item.keyPoints.length ? (
-        <ul className="mt-2 list-disc pl-5 text-xs text-muted-foreground">
-          {item.keyPoints.map((k, i) => (
-            <li key={i}>{k}</li>
-          ))}
-        </ul>
-      ) : null}
+      <input className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
+      <textarea className="mt-2 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs" rows={Math.min(6, Math.max(2, points.split("\n").length))} value={points} onChange={(e) => setPoints(e.target.value)} aria-label="Key points, one per line" />
+      <details className="mt-1 text-xs text-muted-foreground">
+        <summary className="cursor-pointer">Full transcript</summary>
+        <p className="mt-1 leading-relaxed">{item.raw}</p>
+      </details>
       {item.keywords.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {item.keywords.map((k) => (
@@ -153,7 +154,7 @@ function ReviewCard({
       </div>
       <div className="mt-3 flex gap-2">
         <Button type="button" onClick={() => approve.mutate()} disabled={approve.isPending || needsParent || (action !== "memory" && !name.trim())}>
-          Approve
+          Approve & Save
         </Button>
         <Button type="button" variant="outline" onClick={() => reject.mutate()} disabled={reject.isPending}>
           Reject

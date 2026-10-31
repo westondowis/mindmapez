@@ -1,8 +1,8 @@
 import * as THREE from "three";
 
 /** Shown in the corner of the brain view so you can tell which build is live. */
-// NOTE: Increment this semantic patch version (e.g., v5.1 -> v5.2) on every single feature commit or bug fix.
-export const BRAIN_BUILD = "v5.1";
+// NOTE: Increment this semantic patch version (e.g., v5.2 -> v5.3) on every single feature commit or bug fix.
+export const BRAIN_BUILD = "v5.2";
 
 const NOISE = /* glsl */ `
 vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}

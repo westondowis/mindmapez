@@ -158,6 +158,7 @@ export const voiceIngest = createServerFn({ method: "POST" })
       }))
       .sort((a, b) => b.score - a.score);
     const best = scored[0]?.score ? scored[0].c : null;
+    const bestScore = scored[0]?.score ?? 0;
     const sentences = raw.split(/(?<=[.!?])\s+/).filter(Boolean);
     const keyPoints = sentences.slice(0, 4).map((x) => x.trim());
     const tags = extractKeywords(raw);
@@ -168,7 +169,17 @@ export const voiceIngest = createServerFn({ method: "POST" })
       keyPoints,
       tags,
       clarify: thin ? "Can you say a bit more about what you want to keep from that?" : null,
-      action: parseIntent(raw),
+      action: (() => {
+        const said = parseIntent(raw);
+        if (said !== "memory") return said;
+        if (!best) return "branch" as const;
+        return bestScore >= 2 ? ("memory" as const) : ("sub-branch" as const);
+      })(),
+      newName: (() => {
+        const k = tags.find((t) => !(best?.name ?? "").toLowerCase().includes(t)) ?? tags[0] ?? "New branch";
+        return k[0]!.toUpperCase() + k.slice(1);
+      })(),
+      title: (sentences[0] ?? raw).slice(0, 80),
       suggested: best ? { id: best.id, name: best.name, sectorId: best.sector_id } : null,
       branches: concepts.slice(0, 12).map((c) => c.name),
     };
