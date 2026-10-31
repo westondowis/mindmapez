@@ -77,3 +77,22 @@ export const BARGE_RMS_THRESHOLD = 0.14;
 export const BARGE_HOLD_MS = 220;
 /** Minimum spacing between visible voice phase changes (prevents button flicker). */
 export const STATE_DEBOUNCE_MS = 250;
+
+/**
+ * iOS / iPadOS WebKit (incl. iPadOS desktop UA and home-screen PWAs).
+ * On these, running getUserMedia alongside webkitSpeechRecognition contends for the
+ * single hardware audio session, so dictation must own the mic alone.
+ */
+export function isIOSWebKit(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  return /Macintosh/i.test(ua) && (navigator.maxTouchPoints ?? 0) > 1;
+}
+
+/** True when dictation should rely on SpeechRecognition only (no parallel getUserMedia energy monitor). */
+export function preferRecognitionOnly(): boolean {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as { webkitSpeechRecognition?: unknown };
+  return isIOSWebKit() && !!w.webkitSpeechRecognition;
+}

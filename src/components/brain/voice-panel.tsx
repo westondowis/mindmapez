@@ -33,6 +33,7 @@ import {
   extractKeywords,
   rmsOf,
   type ReviewAction,
+  preferRecognitionOnly,
 } from "@/lib/voice";
 
 type VoiceChoice = "male" | "female";
@@ -111,6 +112,51 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const silence = useRef<number | null>(null);
   const recRef = useRef<SpeechRecognition | null>(null);
   const qc = useQueryClient();
+  const recognitionOnly = useRef(false);
+
+  useEffect(() => {
+    recognitionOnly.current = preferRecognitionOnly();
+  }, []);
+
+  /** Must run synchronously inside the tap: wake a suspended AudioContext and clear stale locks. */
+  function primeFromGesture() {
+    const ctx = mic.current?.ctx;
+    if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
+    // A user tap always gets a clean start, even if a previous session hung mid-start.
+    isStartingRef.current = false;
+  }
+
+  // iOS app switch / sleep: tear down recognition and the energy monitor so the next tap starts clean.
+  useEffect(() => {
+    const suspend = () => {
+      if (!openRef.current) return;
+      if (restartTimer.current) window.clearTimeout(restartTimer.current);
+      restartTimer.current = null;
+      if (silence.current) window.clearTimeout(silence.current);
+      silence.current = null;
+      const rec = recRef.current;
+      recRef.current = null; // detaches onend so it cannot schedule a restart
+      try { (rec as unknown as { abort?: () => void } | null)?.abort?.() ?? rec?.stop(); } catch { /* already stopped */ }
+      isStartingRef.current = false;
+      speakToken.current++;
+      window.speechSynthesis?.cancel();
+      speakingRef.current = false;
+      onSpeaking(false);
+      busyRef.current = false;
+      hearingRef.current = false;
+      clearIdleTimers();
+      // Mark stream/energy state dirty: the next ensureMic() reacquires from a fresh tap.
+      releaseMic();
+      syncPhase();
+    };
+    const onVis = () => { if (document.visibilityState === "hidden") suspend(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", suspend);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", suspend);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -180,6 +226,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   /** Acquire the mic ONCE per voice session and watch its RMS energy every frame (Listening AND Speaking). */
   function ensureMic(): Promise<void> {
+    // iOS WebKit: SpeechRecognition owns the audio session; a parallel getUserMedia steals it.
+    if (recognitionOnly.current) return Promise.resolve();
     if (streamRef.current || mic.current) return Promise.resolve();
     if (micPending.current) return micPending.current;
     if (!navigator.mediaDevices?.getUserMedia) return Promise.resolve();
@@ -418,7 +466,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     if (speakingRef.current && !opts.barge) return;
     if (restartTimer.current) window.clearTimeout(restartTimer.current);
     restartTimer.current = null;
-    void ensureMic();
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       setReply("Voice input is not available in this browser.");
@@ -509,6 +556,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     recRef.current = rec;
     isStartingRef.current = true;
     try {
+      // Synchronous in the caller's stack: from a tap this satisfies iOS's user-gesture rule.
       rec.start();
       setHearing(true);
     } catch (err) {
@@ -518,6 +566,14 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       // Release the lock after the start call settles (onend/onerror also clear it).
       queueMicrotask(() => { isStartingRef.current = false; });
     }
+    // Desktop only: energy monitor for barge-in/timers starts AFTER recognition, never awaited.
+    void ensureMic();
+  }
+
+  /** Direct tap on "Talk to the brain": resume audio + start recognition synchronously. */
+  function onTalkTap() {
+    primeFromGesture();
+    listen();
   }
 
   /** On open: greet only after GREETING_DELAY_MS of silence, then auto-off after AUTO_OFF_MS more. */
@@ -563,8 +619,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     openRef.current = true;
     greeted.current = false;
     setOpen(true);
-    // One getUserMedia per session, requested from the user's click; recognition starts after.
-    void ensureMic();
+    primeFromGesture();
+    // recognition.start() runs synchronously in this tap; ensureMic (desktop only) follows, unawaited.
     listen();
     armGreeting();
   }
@@ -633,7 +689,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       </label>
       <button
         type="button"
-        onClick={() => listen()}
+        onClick={onTalkTap}
         disabled={busy}
         className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#6a2ca8] py-2 text-sm"
       >
