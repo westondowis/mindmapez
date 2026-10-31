@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
 /** Shown in the corner of the brain view so you can tell which build is live. */
-export const BRAIN_BUILD = "v4 · overlay labels";
+export const BRAIN_BUILD = "v5 · review";
 
 const NOISE = /* glsl */ `
 vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
