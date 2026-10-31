@@ -179,7 +179,9 @@ function BrainModel({
   guide,
   onPick,
   onHover,
+  activeId,
 }: {
+  activeId?: string | null;
   sectors: BrainSector[];
   spotlightId?: string | null;
   guide: boolean;
@@ -257,6 +259,8 @@ function BrainModel({
     // Labels are plain DOM buttons (one shared overlay), positioned from the 3D
     // anchor each frame and clamped on screen, so none can drift off the edge.
     const lift = guide ? GUIDE_LIFT : BRAIN_LIFT;
+    type Slot = { el: HTMLButtonElement; x: number; y: number; hw: number; hh: number };
+    const slots: Slot[] = [];
     for (const { sector, label } of pins) {
       const el = labelEls.current[sector.id];
       if (!el) continue;
@@ -267,12 +271,41 @@ function BrainModel({
         el.style.opacity = "0";
         continue;
       }
-      const halfW = el.offsetWidth / 2 + 6;
-      const halfH = el.offsetHeight / 2 + 6;
-      const x = THREE.MathUtils.clamp((projected.x * 0.5 + 0.5) * view.width, halfW, view.width - halfW);
-      const y = THREE.MathUtils.clamp((-projected.y * 0.5 + 0.5) * view.height, halfH, view.height - halfH);
-      el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
-      el.style.opacity = "1";
+      slots.push({
+        el,
+        x: (projected.x * 0.5 + 0.5) * view.width,
+        y: (-projected.y * 0.5 + 0.5) * view.height,
+        // +7px each side keeps a 14px gutter, so the 12px hit padding never reaches a neighbour.
+        hw: el.offsetWidth / 2 + 7,
+        hh: el.offsetHeight / 2 + 7,
+      });
+    }
+    // 2D relaxation: push overlapping labels apart along the axis of least overlap.
+    for (let pass = 0; pass < 6; pass++) {
+      for (let i = 0; i < slots.length; i++) {
+        for (let j = i + 1; j < slots.length; j++) {
+          const a = slots[i]!;
+          const b = slots[j]!;
+          const ox = a.hw + b.hw - Math.abs(a.x - b.x);
+          const oy = a.hh + b.hh - Math.abs(a.y - b.y);
+          if (ox <= 0 || oy <= 0) continue;
+          if (oy <= ox) {
+            const d = (a.y <= b.y ? 1 : -1) * (oy / 2 + 0.5);
+            a.y -= d;
+            b.y += d;
+          } else {
+            const d = (a.x <= b.x ? 1 : -1) * (ox / 2 + 0.5);
+            a.x -= d;
+            b.x += d;
+          }
+        }
+      }
+    }
+    for (const t of slots) {
+      const x = THREE.MathUtils.clamp(t.x, t.hw, view.width - t.hw);
+      const y = THREE.MathUtils.clamp(t.y, t.hh, view.height - t.hh);
+      t.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+      t.el.style.opacity = "1";
     }
   });
 
@@ -301,6 +334,24 @@ function BrainModel({
     });
     anchors.current = map;
   }, [pins, anchors]);
+
+  // Drive the shader highlight from whichever sector is hovered (3D mesh, label or chip).
+  const litId = hover ?? activeId ?? null;
+  useEffect(() => {
+    if (!litId) {
+      handle.setHot(null);
+      return;
+    }
+    const box = lobeBoxes.get(litId as BrainSectorId);
+    const pin = pins.find((p) => p.sector.id === litId);
+    const c = box ? box.getCenter(new THREE.Vector3()) : pin?.pos.clone();
+    if (!c) {
+      handle.setHot(null);
+      return;
+    }
+    const ext = box ? Math.max(...box.getSize(new THREE.Vector3()).toArray()) : 0.4;
+    handle.setHot(c.divideScalar(1.7), THREE.MathUtils.clamp((ext / 1.7) * 0.6, 0.12, 0.36));
+  }, [litId, handle, lobeBoxes, pins]);
 
   /**
    * Which sector a click/hover on the brain belongs to: the lobe the touched piece
@@ -540,6 +591,7 @@ export function BrainOverview({
           guide={guide}
           anchors={anchors}
           labelEls={labelEls}
+          activeId={hovered}
           onPick={pick}
           onHover={setHovered}
         />
@@ -578,9 +630,9 @@ export function BrainOverview({
               onPointerEnter={() => setHovered(sector.id)}
               onPointerLeave={() => setHovered(null)}
               style={{ opacity: 0 }}
-              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-colors sm:px-2.5 sm:py-1 sm:text-[11px] ${
+              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-[scale,box-shadow,background-color,border-color] duration-200 before:absolute before:-inset-3 before:content-[''] sm:px-2.5 sm:py-1 sm:text-[11px] ${
                 hot
-                  ? "border-amber-300/70 bg-black/80 shadow-[0_0_16px_rgba(249,197,75,0.45)]"
+                  ? "z-20 scale-[1.08] border-cyan-200 bg-black/85 shadow-[0_0_24px_6px_rgba(34,211,238,0.8),0_0_8px_2px_rgba(250,204,21,0.6)]"
                   : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
               }`}
             >
