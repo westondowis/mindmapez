@@ -19,7 +19,7 @@ declare global {
 }
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
-import { CANCEL_CUE, COMPLETION_CUE, extractKeywords } from "@/lib/voice";
+import { CANCEL_CUE, COMPLETION_CUE, extractKeywords, type ReviewAction } from "@/lib/voice";
 
 type VoiceChoice = "male" | "female";
 
@@ -126,6 +126,45 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     });
   }
 
+  /** Queue everything gathered so far for review. Falls back to raw text so nothing recorded is lost. */
+  async function flushDraft(): Promise<string> {
+    const raw = draft.current.join(" ").trim();
+    draft.current = [];
+    if (!raw) return "There is nothing to store yet. Tell me what to remember.";
+    let payload = {
+      raw,
+      keyPoints: [raw.slice(0, 200)],
+      keywords: extractKeywords(raw),
+      action: "memory" as ReviewAction,
+      conceptId: null as string | null,
+      conceptName: null as string | null,
+      suggestedName: null as string | null,
+    };
+    try {
+      const plan = await voiceIngest({ data: { transcript: raw } });
+      if (plan.ok) {
+        payload = {
+          raw: plan.raw,
+          keyPoints: plan.keyPoints,
+          keywords: plan.tags,
+          action: plan.action,
+          conceptId: plan.suggested?.id ?? null,
+          conceptName: plan.suggested?.name ?? null,
+          suggestedName: plan.suggested?.name ?? null,
+        };
+      }
+    } catch (err) {
+      console.error("[voice] ingest failed, queueing raw", err);
+    }
+    const q = await queueReview({ data: payload });
+    if (!q.ok) {
+      draft.current = [raw];
+      throw new Error(q.error);
+    }
+    void qc.invalidateQueries({ queryKey: ["reviews"] });
+    return payload.suggestedName ? `Stored for review under ${payload.suggestedName}.` : "Stored for review as a new memory.";
+  }
+
   async function handle(text: string) {
     const clean = text.trim();
     if (!clean) {
@@ -140,32 +179,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     try {
       // Completion cue: queue what we gathered for review right away. No more questions.
       if (COMPLETION_CUE.test(clean)) {
-        const raw = draft.current.join(" ").trim();
-        draft.current = [];
-        if (!raw) {
-          const said = "There is nothing to store yet. Tell me what to remember.";
-          setReply(said);
-          speak(said);
-          return;
-        }
-        const plan = await voiceIngest({ data: { transcript: raw } });
-        if (!plan.ok) throw new Error(plan.error);
-        const q = await queueReview({
-          data: {
-            raw: plan.raw,
-            keyPoints: plan.keyPoints,
-            keywords: plan.tags,
-            action: plan.action,
-            conceptId: plan.suggested?.id ?? null,
-            conceptName: plan.suggested?.name ?? null,
-            suggestedName: plan.suggested?.name ?? null,
-          },
-        });
-        if (!q.ok) throw new Error(q.error);
-        void qc.invalidateQueries({ queryKey: ["reviews"] });
-        const said = plan.suggested
-          ? `Stored for review under ${plan.suggested.name}.`
-          : "Stored for review as a new memory.";
+        const said = await flushDraft();
         setReply(said);
         speak(said);
         return;
@@ -257,6 +271,14 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       if (!handled.current && buffer.text.trim()) commit();
       else if (!handled.current) {
         setHearing(false);
+        if (draft.current.length && !busyRef.current) {
+          busyRef.current = true;
+          setBusy(true);
+          void flushDraft()
+            .then((said) => { setReply(said); speak(said); })
+            .catch(() => finishTurn());
+          return;
+        }
         if (continuousRef.current && !busyRef.current) window.setTimeout(() => restartRef.current(), 300);
       }
     };
@@ -283,7 +305,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     <div className="pointer-events-auto absolute left-3 top-10 z-30 w-[min(100%-1.5rem,18rem)] rounded-2xl border border-[#6a2ca8]/40 bg-black/80 p-3 text-white backdrop-blur-md">
       <div className="flex items-center justify-between">
         <p className="text-xs uppercase tracking-[0.14em] text-[#c9b6ff]">Voice</p>
-        <button type="button" onClick={() => { setOpen(false); onSpeaking(false); }} className="text-white/60" aria-label="Close">✕</button>
+        <button type="button" onClick={() => {
+            setOpen(false);
+            onSpeaking(false);
+            window.speechSynthesis?.cancel();
+            try { recRef.current?.stop(); } catch { /* already stopped */ }
+            if (draft.current.length) void flushDraft().catch((e) => console.error("[voice]", e));
+          }} className="text-white/60" aria-label="Close">✕</button>
       </div>
       <div className="mt-2 flex gap-1">
         {(["female", "male"] as const).map((v) => (

@@ -14,7 +14,7 @@ export type ReviewItem = {
 
 /** Spoken cues meaning "I'm finished, store what I said". */
 export const COMPLETION_CUE =
-  /^(?:(?:ok(?:ay)?|yes|yeah|so)[\s,]+)?(?:i'?m done|im done|i am done|that'?s all|that is all|that'?s it|store this|save this|save it|store it|do it|confirm|all done|we'?re done)\b/i;
+  /^(?:(?:ok(?:ay)?|yes|yeah|so|alright|all right)[\s,]+)*(?:i'?m done|im done|i am done|i'?m finished|that'?s (?:all|it|everything)|that is (?:all|it)|(?:store|save|file|log|keep|queue|send) (?:this|that|it)|we'?re done|all done|(?:save|store|got it|done|finished|confirm|do it)\s*[.!]*\s*$)/i;
 
 /** Spoken cues meaning "throw the draft away". */
 export const CANCEL_CUE = /^(?:cancel|never ?mind|discard|forget it|don'?t save|do not save)\b/i;

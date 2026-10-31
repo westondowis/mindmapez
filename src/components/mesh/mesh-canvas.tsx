@@ -553,7 +553,11 @@ export function MeshCanvas({
     setEdges(built.edges);
   }, [built, viewKey, setEdges, setNodes]);
 
-  const persist = useMutation({ mutationFn: savePositions });
+  const persist = useMutation({
+    mutationFn: savePositions,
+    // Keep the cached graph in step so navigating away and back reads the saved coordinates.
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["graph"] }),
+  });
   const sortMut = useMutation({
     mutationFn: async () => {
       if (!sectorId) return;
@@ -619,18 +623,21 @@ export function MeshCanvas({
     (_e, node) => {
       if (node.id === ME_ID || node.id === SECTOR_HUB || node.id === DRAFT_ID || node.id === "__move_up__") return;
       markAccountDirty();
-      persist.mutate({
-        data: {
-          nodes: [
-            {
-              id: node.id,
-              type: node.type === "concept" ? "concept" : "memory",
-              x: node.position.x,
-              y: node.position.y,
-            },
-          ],
+      const moved = [
+        {
+          id: node.id,
+          type: (node.type === "concept" ? "concept" : "memory") as "concept" | "memory",
+          x: node.position.x,
+          y: node.position.y,
         },
-      });
+      ];
+      // Memories tethered to a dragged branch moved with it; save those too.
+      if (node.type === "concept") {
+        for (const n of nodesRef.current) {
+          if (n.type === "memory") moved.push({ id: n.id, type: "memory", x: n.position.x, y: n.position.y });
+        }
+      }
+      persist.mutate({ data: { nodes: moved } });
     },
     [persist],
   );
