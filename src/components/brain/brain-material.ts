@@ -1,8 +1,12 @@
 import * as THREE from "three";
 
 /** Shown in the corner of the brain view so you can tell which build is live. */
-// NOTE: Increment this semantic patch version (e.g., v5.5 -> v5.6) on every single feature commit or bug fix.
-export const BRAIN_BUILD = "v5.5";
+// NOTE: Increment this semantic patch version (e.g., v5.7 -> v5.8) on every single feature commit or bug fix.
+export const BRAIN_BUILD = "v5.7";
+
+/** Resting vs hovered sector lightning: pulse = flicker speed multiplier, amp = brightness. */
+export const HOT_REST = { pulse: 1, amp: 1 } as const;
+export const HOT_ACTIVE = { pulse: 3, amp: 2.2 } as const;
 
 const NOISE = /* glsl */ `
 vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
@@ -104,8 +108,14 @@ export function createBrainMaterial(
     uHotC: { value: new THREE.Vector3() },
     uHotR: { value: 0.2 },
     uHot: { value: 0 },
+    /** Lightning flicker frequency multiplier for the hovered sector (1 = rest). */
+    uHotPulse: { value: HOT_REST.pulse as number },
+    /** Brightness/amplitude multiplier for the hovered sector. */
+    uHotAmp: { value: HOT_REST.amp as number },
   };
   let hotTarget = 0;
+  let pulseTarget: number = HOT_REST.pulse;
+  let ampTarget: number = HOT_REST.amp;
   let flashStart = -10;
   let nextFlash = 1.2;
 
@@ -130,6 +140,8 @@ uniform float uFlashT;
 uniform vec3 uHotC;
 uniform float uHotR;
 uniform float uHot;
+uniform float uHotPulse;
+uniform float uHotAmp;
 ${NOISE}`,
       )
       .replace(
@@ -172,31 +184,39 @@ normal = brainBump(-vViewPosition, normal, vec2(dFdx(hb), dFdy(hb))*2.2, faceDir
   // Hovered sector: electric cyan-gold lightning confined to that region.
   if (uHot > 0.001) {
     float m = uHot * (1.0 - smoothstep(uHotR * 0.55, uHotR, distance(wp, uHotC)));
-    float flick = 0.45 + 0.55 * sin(uTime * 22.0 + snoise(wp * 9.0) * 7.0);
-    float bolt = smoothstep(0.90, 0.99, ridge(wp * 14.0 + warp * 0.9 + uTime * 0.6));
-    float arc = smoothstep(0.93, 0.995, ridge(wp * 31.0 + warp * 1.2 - uTime * 0.9));
+    float flick = 0.45 + 0.55 * sin(uTime * 22.0 * uHotPulse + snoise(wp * 9.0) * 7.0);
+    float bolt = smoothstep(0.90, 0.99, ridge(wp * 14.0 + warp * 0.9 + uTime * 0.6 * uHotPulse));
+    float arc = smoothstep(0.93, 0.995, ridge(wp * 31.0 + warp * 1.2 - uTime * 0.9 * uHotPulse));
     vec3 hotCol = mix(vec3(0.1, 0.85, 1.0), vec3(1.0, 0.86, 0.35), clamp(bolt * flick, 0.0, 1.0));
-    totalEmissiveRadiance += hotCol * (bolt * 7.0 * (0.6 + flick) + arc * 3.5 + 0.35) * m;
+    totalEmissiveRadiance += hotCol * (bolt * 7.0 * (0.6 + flick) + arc * 3.5 + 0.35) * m * uHotAmp;
   }
 }`,
       );
   };
-  material.customProgramCacheKey = () => "brain-veins-v6";
+  material.customProgramCacheKey = () => "brain-veins-v7";
 
   return {
     material,
     setHot: (centre, radius = 0.2) => {
       hotTarget = centre ? 1 : 0;
+      pulseTarget = centre ? HOT_ACTIVE.pulse : HOT_REST.pulse;
+      ampTarget = centre ? HOT_ACTIVE.amp : HOT_REST.amp;
       if (centre) {
         uniforms.uHotC.value.copy(centre);
         uniforms.uHotR.value = radius;
       }
       // Reduced motion: no tween, just a steady, dimmer highlight.
-      if (reduced) uniforms.uHot.value = centre ? 0.5 : 0;
+      if (reduced) {
+        uniforms.uHot.value = centre ? 0.5 : 0;
+        uniforms.uHotPulse.value = HOT_REST.pulse;
+        uniforms.uHotAmp.value = centre ? 1.2 : HOT_REST.amp;
+      }
     },
     tick: (seconds) => {
       uniforms.uTime.value = seconds;
       uniforms.uHot.value += (hotTarget - uniforms.uHot.value) * 0.16;
+      uniforms.uHotPulse.value += (pulseTarget - uniforms.uHotPulse.value) * 0.1;
+      uniforms.uHotAmp.value += (ampTarget - uniforms.uHotAmp.value) * 0.12;
       if (reduced) return;
       if (seconds >= nextFlash) {
         flashStart = seconds;

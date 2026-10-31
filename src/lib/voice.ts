@@ -49,3 +49,25 @@ export function verbosityHint(t: { turns: number; bargeIns: number; topics: stri
   if (hot) return `The user is highly engaged with "${hot}". Go a little deeper on it, three to five sentences.`;
   return "Keep replies to two or three spoken sentences.";
 }
+
+/** Silence after the last recognised speech before a thought is dispatched (never below 2 s). */
+export const VAD_SILENCE_MS = 2000;
+/** After the voice panel opens, wait this long in silence before greeting. */
+export const GREETING_DELAY_MS = 3000;
+/** After the greeting, power voice mode down if the user still says nothing. */
+export const AUTO_OFF_MS = 5000;
+/** Mic RMS (0..1 time-domain) that counts as the user speaking. */
+export const SPEECH_RMS_THRESHOLD = 0.045;
+/** Energy must stay above the threshold this long before it counts (filters clicks and pops). */
+export const SPEECH_HOLD_MS = 100;
+
+/** Root-mean-square energy of a time-domain sample buffer centred on 128 (AnalyserNode byte data). */
+export function rmsOf(samples: ArrayLike<number>): number {
+  if (!samples.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const v = ((samples[i] ?? 128) - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / samples.length);
+}

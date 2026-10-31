@@ -281,7 +281,7 @@ function BrainModel({
       });
     }
     // 2D relaxation: push overlapping labels apart along the axis of least overlap.
-    for (let pass = 0; pass < 6; pass++) {
+    for (let pass = 0; pass < 10; pass++) {
       for (let i = 0; i < slots.length; i++) {
         for (let j = i + 1; j < slots.length; j++) {
           const a = slots[i]!;
@@ -304,7 +304,9 @@ function BrainModel({
     for (const t of slots) {
       const x = THREE.MathUtils.clamp(t.x, t.hw, view.width - t.hw);
       const y = THREE.MathUtils.clamp(t.y, t.hh, view.height - t.hh);
-      t.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+      // Scale lives in the same inline transform, otherwise it would overwrite the hover scale.
+      const k = t.el.dataset.hot === "1" ? 1.08 : 1;
+      t.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${k})`;
       t.el.style.opacity = "1";
     }
   });
@@ -350,6 +352,8 @@ function BrainModel({
       return;
     }
     const ext = box ? Math.max(...box.getSize(new THREE.Vector3()).toArray()) : 0.4;
+    // Fitted space is (raw - rawCenter) * 1.7 / maxDim; the shader's vBP is
+    // (raw - rawCenter) / maxDim, so dividing by the fit scale 1.7 lands in noise space.
     handle.setHot(c.divideScalar(1.7), THREE.MathUtils.clamp((ext / 1.7) * 0.6, 0.12, 0.36));
   }, [litId, handle, lobeBoxes, pins]);
 
@@ -629,10 +633,11 @@ export function BrainOverview({
               onClick={() => pick(sector.id)}
               onPointerEnter={() => setHovered(sector.id)}
               onPointerLeave={() => setHovered(null)}
+              data-hot={hot ? "1" : "0"}
               style={{ opacity: 0 }}
-              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-[scale,box-shadow,background-color,border-color] duration-200 before:absolute before:-inset-3 before:content-[''] sm:px-2.5 sm:py-1 sm:text-[11px] ${
+              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-[box-shadow,background-color,border-color] duration-200 before:absolute before:-inset-3 before:content-[''] sm:px-2.5 sm:py-1 sm:text-[11px] ${
                 hot
-                  ? "z-20 scale-[1.08] border-cyan-200 bg-black/85 shadow-[0_0_24px_6px_rgba(34,211,238,0.8),0_0_8px_2px_rgba(250,204,21,0.6)]"
+                  ? "z-20 border-2 border-cyan-200 bg-black/85 shadow-[0_0_24px_6px_rgba(34,211,238,0.8),0_0_8px_2px_rgba(250,204,21,0.6)]"
                   : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
               }`}
             >

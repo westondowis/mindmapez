@@ -19,10 +19,18 @@ declare global {
 }
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
-import { CANCEL_CUE, COMPLETION_CUE, extractKeywords, type ReviewAction } from "@/lib/voice";
-
-/** Silence after speech before the thought is sent (lets people pause to think). */
-const VAD_SILENCE_MS = 2000;
+import {
+  AUTO_OFF_MS,
+  CANCEL_CUE,
+  COMPLETION_CUE,
+  GREETING_DELAY_MS,
+  SPEECH_HOLD_MS,
+  SPEECH_RMS_THRESHOLD,
+  VAD_SILENCE_MS,
+  extractKeywords,
+  rmsOf,
+  type ReviewAction,
+} from "@/lib/voice";
 
 type VoiceChoice = "male" | "female";
 
@@ -73,8 +81,14 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [continuous, setContinuous] = useState(false);
   const continuousRef = useRef(false);
   const busyRef = useRef(false);
-  const idle = useRef<number | null>(null);
+  const greetTimer = useRef<number | null>(null);
+  const offTimer = useRef<number | null>(null);
   const greeted = useRef(false);
+  const speakingRef = useRef(false);
+  /** Bumped on every speak/cancel so stale utterance callbacks are ignored after a barge-in. */
+  const speakToken = useRef(0);
+  const mic = useRef<{ stream: MediaStream; ctx: AudioContext; analyser: AnalyserNode; raf: number } | null>(null);
+  const loudSince = useRef<number | null>(null);
   const actions = useRef({ toggle: () => {}, toggleContinuous: () => {} });
   const openRef = useRef(false);
   const draft = useRef<string[]>([]);
@@ -99,8 +113,85 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     return () => {
       window.speechSynthesis?.removeEventListener?.("voiceschanged", warm);
       window.speechSynthesis?.cancel();
+      stopMic();
+      clearIdleTimers();
     };
   }, []);
+
+  function clearIdleTimers() {
+    if (greetTimer.current) window.clearTimeout(greetTimer.current);
+    if (offTimer.current) window.clearTimeout(offTimer.current);
+    greetTimer.current = null;
+    offTimer.current = null;
+  }
+
+  /** Any user speech: cancel the greeting and the auto-off. */
+  function onUserSpeech() {
+    clearIdleTimers();
+    greeted.current = false;
+  }
+
+  /** Open the live mic and watch its RMS energy every frame (runs during Listening AND Speaking). */
+  async function startMic() {
+    if (mic.current || !navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      if (!openRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize);
+      const loop = () => {
+        if (!mic.current) return;
+        analyser.getByteTimeDomainData(buf);
+        const now = performance.now();
+        if (rmsOf(buf) >= SPEECH_RMS_THRESHOLD) {
+          loudSince.current ??= now;
+          if (now - loudSince.current >= SPEECH_HOLD_MS) {
+            onUserSpeech();
+            if (speakingRef.current) bargeIn();
+          }
+        } else {
+          loudSince.current = null;
+        }
+        mic.current.raf = window.requestAnimationFrame(loop);
+      };
+      mic.current = { stream, ctx, analyser, raf: window.requestAnimationFrame(loop) };
+    } catch (err) {
+      console.error("[voice] mic energy monitor unavailable", err);
+    }
+  }
+
+  function stopMic() {
+    const m = mic.current;
+    mic.current = null;
+    loudSince.current = null;
+    if (!m) return;
+    window.cancelAnimationFrame(m.raf);
+    m.stream.getTracks().forEach((t) => t.stop());
+    void m.ctx.close().catch(() => {});
+  }
+
+  /** User talked over the AI: cut speech instantly, drop the queue, go back to Listening. */
+  function bargeIn() {
+    speakToken.current++;
+    speakingRef.current = false;
+    window.speechSynthesis?.pause();
+    window.speechSynthesis?.cancel();
+    bargedIn.current = true;
+    onSpeaking(false);
+    busyRef.current = false;
+    setBusy(false);
+    loudSince.current = null;
+    listen();
+  }
 
   /** End of a turn: clear busy, and in continuous mode go back to Listening. */
   function finishTurn() {
@@ -125,12 +216,21 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function speak(text: string) {
+  function speak(text: string, onDone?: () => void) {
     if (!window.speechSynthesis || !speechChunks(text).length) {
       finishTurn();
+      onDone?.();
       return;
     }
+    const token = ++speakToken.current;
     window.speechSynthesis.cancel();
+    const done = () => {
+      if (token !== speakToken.current) return;
+      speakingRef.current = false;
+      onSpeaking(false);
+      finishTurn();
+      onDone?.();
+    };
     const v = pickVoice(voice);
     const chunks = speechChunks(text);
     chunks.forEach((chunk, i) => {
@@ -141,9 +241,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       }
       u.rate = 1;
       u.pitch = voice === "male" ? 0.92 : 1;
-      if (i === 0) u.onstart = () => onSpeaking(true);
-      if (i === chunks.length - 1) u.onend = () => { onSpeaking(false); finishTurn(); };
-      u.onerror = () => { onSpeaking(false); finishTurn(); };
+      if (i === 0) u.onstart = () => {
+        if (token !== speakToken.current) return;
+        speakingRef.current = true;
+        onSpeaking(true);
+      };
+      if (i === chunks.length - 1) u.onend = done;
+      u.onerror = done;
       window.speechSynthesis.speak(u);
     });
   }
@@ -244,6 +348,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     try {
       if (window.speechSynthesis) {
         if (window.speechSynthesis.speaking) bargedIn.current = true;
+        speakToken.current++;
+        speakingRef.current = false;
         window.speechSynthesis.cancel();
         const prime = new SpeechSynthesisUtterance(" ");
         prime.volume = 0;
@@ -264,19 +370,20 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     // Always stream continuously: our own 2 s silence timer decides when the thought is over.
     rec.continuous = true;
     rec.interimResults = true;
-    const buffer = { text: "" };
+    // `base` carries text across recognition sessions the browser ends on its own.
+    const buffer = { text: "", base: "" };
     const commit = () => {
       if (handled.current || !buffer.text.trim()) return;
       handled.current = true;
       if (silence.current) window.clearTimeout(silence.current);
+      silence.current = null;
       setHearing(false);
       try { rec.stop(); } catch { /* already stopped */ }
       void handle(buffer.text.trim());
     };
     rec.onresult = (e) => {
-      // Any speech at all cancels the inactivity pacing.
-      if (idle.current) window.clearTimeout(idle.current);
-      greeted.current = false;
+      // Any speech at all cancels the greeting and auto-off timers.
+      onUserSpeech();
       // Show interim text, but only act on finalised results (partials caused repeat replies).
       let finalText = "";
       let interim = "";
@@ -286,16 +393,29 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         if (r?.isFinal) finalText += t + " ";
         else interim += t;
       }
-      buffer.text = finalText.trim();
-      setLine((finalText + interim).trim());
+      buffer.text = `${buffer.base} ${finalText}`.trim();
+      setLine(`${buffer.base} ${finalText}${interim}`.trim());
+      // Re-arm on every result (interim too): only a full VAD_SILENCE_MS of quiet ends the thought.
       if (silence.current) window.clearTimeout(silence.current);
-      if (buffer.text) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
+      if (buffer.text || interim.trim()) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
     };
     rec.onerror = () => { setHearing(false); if (!handled.current) { busyRef.current = false; setBusy(false); } };
     rec.onend = () => {
+      if (!openRef.current || recRef.current !== rec) return;
+      if (!handled.current && buffer.text.trim()) {
+        // The browser ended the session mid-thought (a brief pause). Don't dispatch yet:
+        // keep the pending 2 s silence timer and resume listening with the text carried over.
+        buffer.base = buffer.text;
+        if (!silence.current) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
+        try {
+          rec.start();
+        } catch {
+          commit();
+        }
+        return;
+      }
       if (silence.current) window.clearTimeout(silence.current);
-      if (!handled.current && buffer.text.trim()) commit();
-      else if (!handled.current) {
+      if (!handled.current) {
         setHearing(false);
         if (draft.current.length && !busyRef.current) {
           busyRef.current = true;
@@ -311,27 +431,34 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     recRef.current = rec;
     setHearing(true);
     rec.start();
-    // Inactivity pacing: greet after 3 s of silence, power down after 5 more.
-    if (idle.current) window.clearTimeout(idle.current);
-    idle.current = window.setTimeout(() => {
-      if (handled.current || busyRef.current || buffer.text.trim()) return;
-      try { rec.stop(); } catch { /* already stopped */ }
-      if (greeted.current) {
-        closeVoice();
-        return;
-      }
+  }
+
+  /** On open: greet only after GREETING_DELAY_MS of silence, then auto-off after AUTO_OFF_MS more. */
+  function armGreeting() {
+    clearIdleTimers();
+    greetTimer.current = window.setTimeout(() => {
+      greetTimer.current = null;
+      if (!openRef.current || busyRef.current || handled.current) return;
       greeted.current = true;
-      busyRef.current = true;
-      setBusy(true);
       const hi = "Hey, what's up?";
       setReply(hi);
-      speak(hi);
-    }, greeted.current ? 5000 : 3000);
+      speak(hi, () => {
+        if (!openRef.current || !greeted.current) return;
+        offTimer.current = window.setTimeout(() => {
+          offTimer.current = null;
+          if (greeted.current && !busyRef.current) closeVoice();
+        }, AUTO_OFF_MS);
+      });
+    }, GREETING_DELAY_MS);
   }
 
   function closeVoice() {
-    if (idle.current) window.clearTimeout(idle.current);
+    clearIdleTimers();
     if (silence.current) window.clearTimeout(silence.current);
+    silence.current = null;
+    speakToken.current++;
+    speakingRef.current = false;
+    stopMic();
     greeted.current = false;
     openRef.current = false;
     setOpen(false);
@@ -350,6 +477,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     greeted.current = false;
     setOpen(true);
     listen();
+    void startMic();
+    armGreeting();
   }
 
   restartRef.current = () => { if (openRef.current) listen(); };
