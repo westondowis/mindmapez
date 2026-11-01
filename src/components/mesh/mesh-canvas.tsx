@@ -484,6 +484,7 @@ function toBranchElements(
 export function MeshCanvas({
   graph,
   onSelectMemory,
+  onDismissMemory,
   forceFilter,
   touring = false,
   guide = false,
@@ -492,6 +493,8 @@ export function MeshCanvas({
 }: {
   graph: GraphPayload;
   onSelectMemory: (id: string) => void;
+  /** Pane (empty canvas) click: close any memory detail/edit UI. */
+  onDismissMemory?: () => void;
   forceFilter?: string | null;
   touring?: boolean;
   guide?: boolean;
@@ -1067,6 +1070,8 @@ export function MeshCanvas({
             setExpanded((s) => new Set(s).add(concept.id));
           }}
           onPaneClick={() => {
+            setOpenMemoryId(null);
+            onDismissMemory?.();
             if (!composing) setSelectedId(branchId);
           }}
           onNodeDrag={onNodeDrag}

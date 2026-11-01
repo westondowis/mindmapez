@@ -153,7 +153,7 @@ function usePrefersReducedMotion() {
 }
 
 /** One full current pulse, in seconds. The soma ring and ambient glow run slower. */
-const PULSE_SECONDS = 2.8;
+const PULSE_SECONDS = 3;
 
 /**
  * A memory drawn as a neuron: blue dendrites around a glowing soma, a purple
@@ -169,7 +169,7 @@ function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
   const currentPath = `M${axonEnd + 4} 30 H${start - 4}`;
   const e = axonEnd;
   return (
-    <svg viewBox={`0 0 ${width} 60`} width={width * 0.78} height="47" aria-hidden className={glow ? "synapse-svg" : ""}>
+    <svg viewBox={`0 0 ${width} 60`} width={width * 0.78} height="47" aria-hidden className="synapse-svg">
       <defs>
         <radialGradient id={`soma-${uid}`} cx="45%" cy="40%" r="70%">
           <stop offset="0%" stopColor="#5b8dff" />
@@ -244,10 +244,10 @@ function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
       {/* current: a comet that runs from the parent end of the strand to the soma */}
       {reduced
         ? null
-        : [0, 0.14, 0.28].map((lag, i) => (
-            <circle key={i} r={3.6 - i * 1.1} fill={i === 0 ? "#ffffff" : "#e2b8ff"} opacity="0">
+        : [0, 0.1, 0.2, 0.3].map((lag, i) => (
+            <circle key={i} r={4 - i * 0.9} fill={i === 0 ? "#ffffff" : "#e2b8ff"} opacity="0">
               <animateMotion dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" path={currentPath} keyTimes="0;1" calcMode="linear" />
-              <animate attributeName="opacity" dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" values={`0;${(0.95 - i * 0.28).toFixed(2)};${(0.95 - i * 0.28).toFixed(2)};0`} keyTimes="0;0.1;0.85;1" />
+              <animate attributeName="opacity" dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" values={`0;${(1 - i * 0.22).toFixed(2)};${(1 - i * 0.22).toFixed(2)};0`} keyTimes="0;0.1;0.85;1" />
             </circle>
           ))}
     </svg>
