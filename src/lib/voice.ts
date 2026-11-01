@@ -71,9 +71,6 @@ export function rmsOf(samples: ArrayLike<number>): number {
 export const BARGE_RMS_THRESHOLD = 0.14;
 /** Elevated energy must persist this long before it counts as a barge-in. */
 export const BARGE_HOLD_MS = 220;
-/** Minimum spacing between visible voice phase changes (prevents button flicker). */
-export const STATE_DEBOUNCE_MS = 250;
-
 /**
  * iOS / iPadOS WebKit (incl. iPadOS desktop UA and home-screen PWAs).
  * On these, running getUserMedia alongside webkitSpeechRecognition contends for the
@@ -96,5 +93,3 @@ export function preferRecognitionOnly(): boolean {
 /** 1-sample silent WAV used to unlock iOS audio playback inside the tap. */
 export const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 
-/** If speechSynthesis has not fired onstart by now, treat it as silent and end the turn. */
-export const SPEAK_START_TIMEOUT_MS = 1500;

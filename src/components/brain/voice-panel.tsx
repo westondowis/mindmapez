@@ -1,782 +1,242 @@
 import { Mic, Volume2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-type SpeechRecognition = {
+import { useEffect, useMemo, useRef, useState } from "react";
+import { askAssistant, voiceIngest } from "@/lib/server/assistant";
+import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
+import { SILENT_WAV, VAD_SILENCE_MS, preferRecognitionOnly } from "@/lib/voice";
+import { createTurnProcessor } from "@/lib/voice-ingest";
+import { startEnergyMonitor } from "@/lib/voice-energy";
+import { VoiceSession, type Phase, type Recognizer, type RecognizerEvents } from "@/lib/voice-session";
+import { primeSynth, speakNative, type VoiceChoice } from "@/lib/voice-synth";
+
+type SpeechResultList = ArrayLike<{ 0: { transcript: string }; isFinal: boolean }>;
+type SpeechRecognitionLike = {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
   start: () => void;
   stop: () => void;
-  onresult: ((e: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> }) => void) | null;
+  abort?: () => void;
+  onresult: ((e: { results: SpeechResultList }) => void) | null;
   onerror: ((e?: { error?: string }) => void) | null;
   onend: (() => void) | null;
-  onstart?: (() => void) | null;
 };
 declare global {
   interface Window {
-    SpeechRecognition?: new () => SpeechRecognition;
-    webkitSpeechRecognition?: new () => SpeechRecognition;
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
   }
 }
-import { askAssistant, voiceIngest } from "@/lib/server/assistant";
-import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
-import {
-  SPEAK_START_TIMEOUT_MS,
-  SILENT_WAV,
-  BARGE_HOLD_MS,
-  BARGE_RMS_THRESHOLD,
-  STATE_DEBOUNCE_MS,
-  CANCEL_CUE,
-  COMPLETION_CUE,
-  SPEECH_HOLD_MS,
-  SPEECH_RMS_THRESHOLD,
-  VAD_SILENCE_MS,
-  extractKeywords,
-  rmsOf,
-  type ReviewAction,
-  preferRecognitionOnly,
-} from "@/lib/voice";
 
-type VoiceChoice = "male" | "female";
-
-const MALE_NAMES = /daniel|alex|aaron|arthur|fred|david|james|guy|gordon|oliver|rishi|tom|evan|nathan|google uk english male|male/i;
-const FEMALE_NAMES = /samantha|ava|allison|susan|serena|karen|moira|tessa|victoria|zira|jenny|aria|nicky|kate|stephanie|google us english|google uk english female|female/i;
-
-/** Higher = more natural. Prefers the device's premium/enhanced/Siri/Google/neural voices. */
-function voiceQuality(v: SpeechSynthesisVoice): number {
-  const n = `${v.name} ${v.voiceURI}`;
-  let q = 0;
-  if (/premium|enhanced|neural|natural|siri|online/i.test(n)) q += 6;
-  if (/google/i.test(n)) q += 3;
-  if (/^en[-_]us/i.test(v.lang)) q += 2;
-  else if (/^en/i.test(v.lang)) q += 1;
-  if (v.localService) q += 1;
-  if (/compact|eloquence|novelty|bad news|bahh|bells|boing|cellos|good news|jester|organ|superstar|trinoids|whisper|zarvox|albert|bubbles|deranged|hysterical/i.test(n)) q -= 20;
-  return q;
+/** Platform adapter: wraps the browser recognizer behind the session's Recognizer port. */
+function browserRecognizer(opts: { continuous: boolean }, ev: RecognizerEvents): Recognizer | null {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const r = new SR();
+  r.lang = "en-US";
+  r.continuous = opts.continuous; // desktop streams; iOS runs single-utterance sessions
+  r.interimResults = true;
+  r.onresult = (e) => ev.onResult(Array.from(e.results, (x) => ({ text: x[0]?.transcript ?? "", final: !!x.isFinal })));
+  r.onend = () => ev.onEnd();
+  r.onerror = (e) => ev.onError(e?.error);
+  return {
+    start: () => r.start(),
+    stop: () => { try { r.stop(); } catch { /* already stopped */ } },
+    abort: () => {
+      r.onresult = r.onend = r.onerror = null; // a disposed instance can never call back
+      try { r.abort?.(); } catch { /* already ended */ }
+      try { r.stop(); } catch { /* already ended */ }
+    },
+  };
 }
 
-function pickVoice(choice: VoiceChoice): SpeechSynthesisVoice | null {
-  if (typeof window === "undefined" || !window.speechSynthesis) return null;
-  const en = window.speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
-  if (!en.length) return null;
-  const wanted = choice === "male" ? MALE_NAMES : FEMALE_NAMES;
-  const other = choice === "male" ? FEMALE_NAMES : MALE_NAMES;
-  const score = (v: SpeechSynthesisVoice) =>
-    voiceQuality(v) + (wanted.test(v.name) ? 8 : 0) - (other.test(v.name) && !wanted.test(v.name) ? 8 : 0);
-  return [...en].sort((a, b) => score(b) - score(a))[0] ?? null;
+/** Safari Audio Session API (iOS 16.4+): "playback" ignores the silent switch and follows the active route. */
+function setAudioSession(type: "playback" | "play-and-record" | "auto") {
+  try {
+    const as = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+    if (as && as.type !== type) as.type = type;
+  } catch {
+    // unsupported: default routing
+  }
 }
 
-/** Plain, speakable text split into sentence-sized chunks (long utterances get cut off on some phones). */
-function speechChunks(text: string): string[] {
-  const clean = text
-    .replace(/[*_#`>]+/g, "")
-    .replace(/^\s*[•\-]\s+/gm, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return clean.match(/[^.!?]+[.!?]*\s*/g)?.map((c) => c.trim()).filter(Boolean) ?? [];
-}
+const LABEL: Record<Phase, string> = {
+  idle: "Talk to the brain",
+  listening: "Listening…",
+  thinking: "Thinking…",
+  speaking: "Speaking…",
+  error: "Try again",
+};
 
 export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [voice, setVoice] = useState<VoiceChoice>("female");
-  type Phase = "idle" | "listening" | "thinking" | "speaking";
-  const [phase, setPhaseState] = useState<Phase>("idle");
-  const hearing = phase === "listening";
-  const busy = phase === "thinking" || phase === "speaking";
-  const hearingRef = useRef(false);
-  const phaseAt = useRef(0);
-  const phaseTimer = useRef<number | null>(null);
-  /** Single persistent mic stream for the whole voice session (getUserMedia is called once). */
-  const streamRef = useRef<MediaStream | null>(null);
-  const micPending = useRef<Promise<void> | null>(null);
-  const isStartingRef = useRef(false);
-  /** True while the user wants the mic open (tap → close/stop). Empty onend restarts only while set. */
-  const wantListenRef = useRef(false);
-  const manualStopRef = useRef<(() => void) | null>(null);
-  const silentAudio = useRef<HTMLAudioElement | null>(null);
-  const bargingRef = useRef(false);
-  const restartTimer = useRef<number | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [line, setLine] = useState("");
   const [reply, setReply] = useState("");
   const [continuous, setContinuous] = useState(false);
-  const continuousRef = useRef(false);
-  const busyRef = useRef(false);
-  const speakingRef = useRef(false);
-  /** Bumped on every speak/cancel so stale utterance callbacks are ignored after a barge-in. */
-  const speakToken = useRef(0);
-  const mic = useRef<{ stream: MediaStream; ctx: AudioContext; analyser: AnalyserNode; raf: number } | null>(null);
-  const loudSince = useRef<number | null>(null);
-  const actions = useRef({ toggle: () => {}, toggleContinuous: () => {} });
-  const openRef = useRef(false);
-  const draft = useRef<string[]>([]);
+  const live = useRef({ voice, continuous, open, onSpeaking });
+  live.current = { voice, continuous, open, onSpeaking };
   const bargedIn = useRef(false);
-  const restartRef = useRef<() => void>(() => {});
-  const silence = useRef<number | null>(null);
-  const recRef = useRef<SpeechRecognition | null>(null);
-  const qc = useQueryClient();
-  const recognitionOnly = useRef(false);
-  /** Latest voice choice for callbacks created earlier (switching voice never touches the mic). */
-  const voiceRef = useRef<VoiceChoice>("female");
-  voiceRef.current = voice;
+  const silentAudio = useRef<HTMLAudioElement | null>(null);
+  const stopSpeech = useRef<() => void>(() => {});
+  const stopEnergy = useRef<(() => void) | null>(null);
+  const iosSingle = useMemo(() => (typeof window === "undefined" ? false : preferRecognitionOnly()), []);
 
-  useEffect(() => {
-    recognitionOnly.current = preferRecognitionOnly();
-  }, []);
+  const turns = useMemo(
+    () =>
+      createTurnProcessor({
+        ingest: (raw) => voiceIngest({ data: { transcript: raw } }),
+        queue: (payload) => queueReview({ data: payload }),
+        ask: (prompt) => askAssistant({ data: { prompt, voice: true } }),
+        record: (bargeIn, keywords) => recordVoiceTurn({ data: { bargeIn, keywords } }),
+        consumeBargeIn: () => {
+          const b = bargedIn.current;
+          bargedIn.current = false;
+          return b;
+        },
+        onQueued: () => void qc.invalidateQueries({ queryKey: ["reviews"] }),
+      }),
+    [qc],
+  );
 
-  /**
-   * Safari Audio Session API (iOS 16.4+/17): "playback" and "play-and-record" both ignore the ringer/silent
-   * switch and follow the active route (speaker or Bluetooth). We use play-and-record while capturing and
-   * switch to "playback" for TTS once recognition + mic tracks are released.
-   */
-  function setAudioSession(type: "playback" | "play-and-record" | "auto") {
-    try {
-      const as = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
-      if (as && as.type !== type) as.type = type;
-    } catch (err) {
-      console.error("[voice] audioSession.type failed", type, err);
-    }
-  }
+  const session = useMemo(
+    () =>
+      new VoiceSession(
+        {
+          createRecognizer: browserRecognizer,
+          process: turns.process,
+          cancelSpeech: () => {
+            stopSpeech.current();
+            stopSpeech.current = () => {};
+          },
+          speak: (text, cb) => {
+            // Recognition is already fully stopped here, so iOS can leave the call route.
+            setAudioSession("playback");
+            stopSpeech.current = speakNative(text, live.current.voice, {
+              onStart: cb.onStart,
+              onEnd: () => {
+                if (live.current.open) setAudioSession("play-and-record");
+                cb.onEnd();
+              },
+              onError: cb.onEnd,
+            });
+          },
+        },
+        {
+          silenceMs: VAD_SILENCE_MS,
+          iosSingle,
+          isContinuous: () => live.current.continuous,
+          onPhase: setPhase,
+          onLine: setLine,
+          onReply: setReply,
+          onSpeaking: (on) => live.current.onSpeaking(on),
+        },
+      ),
+    [turns, iosSingle],
+  );
 
-  /** Must run synchronously inside the tap: wake a suspended AudioContext and clear stale locks. */
-  function primeFromGesture() {
-    setAudioSession("play-and-record");
-    const ctx = mic.current?.ctx;
-    if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
-    // iOS: a play() inside the tap unlocks later programmatic audio. Rejection is harmless.
-    try {
-      const a = (silentAudio.current ??= new Audio(SILENT_WAV));
-      if (a.src !== SILENT_WAV) a.src = SILENT_WAV;
-      a.muted = true;
-      a.setAttribute("playsinline", "");
-      const p = a.play();
-      if (p) void p.then(() => a.pause()).catch(() => {});
-    } catch {
-      // no HTMLAudioElement support: nothing to unlock
-    }
-    // A user tap always gets a clean start, even if a previous session hung mid-start.
-    isStartingRef.current = false;
-  }
-
-  // iOS app switch / sleep: tear down recognition and the energy monitor so the next tap starts clean.
-  useEffect(() => {
-    const suspend = () => {
-      if (!openRef.current) return;
-      if (restartTimer.current) window.clearTimeout(restartTimer.current);
-      restartTimer.current = null;
-      if (silence.current) window.clearTimeout(silence.current);
-      silence.current = null;
-      const rec = recRef.current;
-      recRef.current = null; // detaches onend so it cannot schedule a restart
-      try { (rec as unknown as { abort?: () => void } | null)?.abort?.() ?? rec?.stop(); } catch { /* already stopped */ }
-      isStartingRef.current = false;
-      speakToken.current++;
-      window.speechSynthesis?.cancel();
-      speakingRef.current = false;
-      onSpeaking(false);
-      busyRef.current = false;
-      hearingRef.current = false;
-      // Mark stream/energy state dirty: the next ensureMic() reacquires from a fresh tap.
-      releaseMic();
-      syncPhase();
-    };
-    const onVis = () => { if (document.visibilityState === "hidden") suspend(); };
-    document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("pagehide", suspend);
-    return () => {
-      document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("pagehide", suspend);
-    };
-  }, []);
-
+  // Saved voice, and a clean teardown on unmount / app switch / sleep.
   useEffect(() => {
     try {
       const saved = localStorage.getItem("mm-voice");
       if (saved === "male" || saved === "female") setVoice(saved);
     } catch {
-      // storage unavailable (private mode): keep the default voice
+      // private mode: keep the default voice
     }
-    window.speechSynthesis?.getVoices();
-    // Voices load asynchronously on most phones; touching them again once ready.
     const warm = () => void window.speechSynthesis?.getVoices();
+    warm();
     window.speechSynthesis?.addEventListener?.("voiceschanged", warm);
-    // Stop talking if the panel goes away mid-sentence.
+    const suspend = () => { if (live.current.open) session.stop(); };
+    const onVis = () => { if (document.visibilityState === "hidden") suspend(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", suspend);
     return () => {
       window.speechSynthesis?.removeEventListener?.("voiceschanged", warm);
-      window.speechSynthesis?.cancel();
-      releaseMic();
-      if (phaseTimer.current) window.clearTimeout(phaseTimer.current);
-      if (restartTimer.current) window.clearTimeout(restartTimer.current);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", suspend);
+      session.stop();
+      stopEnergy.current?.();
     };
-  }, []);
+  }, [session]);
 
-  /** Visible phase derived from refs; UI changes are spaced >= STATE_DEBOUNCE_MS apart (logic refs stay immediate). */
-  function syncPhase(immediate = false) {
-    if (immediate && phaseTimer.current) {
-      window.clearTimeout(phaseTimer.current);
-      phaseTimer.current = null;
-    }
-    const apply = () => {
-      phaseTimer.current = null;
-      phaseAt.current = performance.now();
-      const next: Phase = speakingRef.current ? "speaking" : busyRef.current ? "thinking" : hearingRef.current ? "listening" : "idle";
-      setPhaseState(next);
-    };
-    const wait = STATE_DEBOUNCE_MS - (performance.now() - phaseAt.current);
-    if (phaseTimer.current) return; // a pending apply will read the latest refs
-    if (immediate || wait <= 0) apply();
-    else phaseTimer.current = window.setTimeout(apply, wait);
-  }
-  function setHearing(on: boolean) {
-    hearingRef.current = on;
-    syncPhase();
-  }
-  function setBusy(_on: boolean) {
-    syncPhase();
-  }
-  function setSpeaking(on: boolean) {
-    speakingRef.current = on;
-    onSpeaking(on);
-    syncPhase();
-  }
-  /** Kill a recognition instance for good: detach every handler, abort, never reuse it (iOS won't restart an ended one). */
-  function disposeRecognition() {
-    if (restartTimer.current) window.clearTimeout(restartTimer.current);
-    restartTimer.current = null;
-    const rec = recRef.current;
-    recRef.current = null;
-    isStartingRef.current = false;
-    if (!rec) return;
-    rec.onresult = null;
-    rec.onend = null;
-    rec.onerror = null;
-    rec.onstart = null;
-    try { (rec as SpeechRecognition & { abort?: () => void }).abort?.(); } catch { /* already ended */ }
-    try { rec.stop(); } catch { /* already ended */ }
-  }
-
-  function stopRecognition() {
-    if (restartTimer.current) window.clearTimeout(restartTimer.current);
-    restartTimer.current = null;
-    try { recRef.current?.stop(); } catch { /* already stopped */ }
-  }
-
-  /** Fully release SpeechRecognition before TTS so iOS leaves play-and-record (telephony) mode and routes to A2DP/Bluetooth. */
-  function releaseRecognitionForPlayback() {
-    disposeRecognition();
-    // Recognition-only (iOS) path holds no GUM stream; if any track exists there, mute it (never stop/re-request).
-    // Mute (never stop) mic tracks on every platform so the OS leaves telephony mode; restored in finishTurn.
-    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
-    setAudioSession("playback");
-  }
-
-  /** Resolve a real voice; on iOS getVoices() is often empty until voiceschanged fires once. */
-  function withVoice(cb: (v: SpeechSynthesisVoice | null) => void) {
-    const synth = window.speechSynthesis;
-    const v = pickVoice(voiceRef.current);
-    if (v || synth.getVoices().length) return cb(v ?? synth.getVoices()[0] ?? null);
-    let fired = false;
-    const go = () => {
-      if (fired) return;
-      fired = true;
-      synth.removeEventListener?.("voiceschanged", go);
-      cb(pickVoice(voiceRef.current) ?? synth.getVoices()[0] ?? null);
-    };
-    synth.addEventListener?.("voiceschanged", go);
-    window.setTimeout(go, 1000);
-  }
-
-  /** Desktop energy monitor hook for detected user speech (no greeting/auto-off timers exist any more). */
-  function onUserSpeech() {
-    /* intentionally empty: the assistant never speaks first */
-  }
-
-  /** Acquire the mic ONCE per voice session and watch its RMS energy every frame (Listening AND Speaking). */
-  function ensureMic(): Promise<void> {
-    // iOS WebKit: SpeechRecognition owns the audio session; a parallel getUserMedia steals it.
-    // iOS: NEVER call getUserMedia alongside webkitSpeechRecognition (single audio engine).
-    if (recognitionOnly.current || preferRecognitionOnly()) {
-      recognitionOnly.current = true;
-      return Promise.resolve();
-    }
-    if (streamRef.current || mic.current) return Promise.resolve();
-    if (micPending.current) return micPending.current;
-    if (!navigator.mediaDevices?.getUserMedia) return Promise.resolve();
-    micPending.current = (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-        if (!openRef.current) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const ctx = new Ctx();
-        // iOS often starts the context suspended after await; resume from this user-gesture chain.
-        void ctx.resume().catch(() => {});
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 1024;
-        ctx.createMediaStreamSource(stream).connect(analyser);
-        const buf = new Uint8Array(analyser.fftSize);
-        const loop = () => {
-          if (!mic.current) return;
-          analyser.getByteTimeDomainData(buf);
-          const now = performance.now();
-          const rms = rmsOf(buf);
-          // Echo shield: while the AI talks, only clearly-louder-than-speaker energy, held longer, barges in.
-          const speaking = speakingRef.current;
-          const threshold = speaking ? BARGE_RMS_THRESHOLD : SPEECH_RMS_THRESHOLD;
-          const hold = speaking ? BARGE_HOLD_MS : SPEECH_HOLD_MS;
-          if (rms >= threshold) {
-            loudSince.current ??= now;
-            if (now - loudSince.current >= hold) {
-              if (speaking) bargeIn();
-              else onUserSpeech();
-            }
-          } else {
-            loudSince.current = null;
-          }
-          mic.current.raf = window.requestAnimationFrame(loop);
-        };
-        mic.current = { stream, ctx, analyser, raf: window.requestAnimationFrame(loop) };
-      } catch (err) {
-        console.error("[voice] mic energy monitor unavailable", err);
-      } finally {
-        micPending.current = null;
-      }
-    })();
-    return micPending.current;
-  }
-
-  /** The ONLY place tracks are stopped: X close, auto-off close, or unmount. */
-  function releaseMic() {
-    const m = mic.current;
-    const stream = streamRef.current;
-    mic.current = null;
-    streamRef.current = null;
-    loudSince.current = null;
-    if (m) {
-      window.cancelAnimationFrame(m.raf);
-      void m.ctx.close().catch(() => {});
-    }
-    stream?.getTracks().forEach((t) => t.stop());
-  }
-
-  /** User talked over the AI: cut speech instantly, drop the queue, go back to Listening. */
-  function bargeIn() {
-    if (bargingRef.current) return;
-    bargingRef.current = true;
-    speakToken.current++;
-    window.speechSynthesis?.pause();
-    window.speechSynthesis?.cancel();
-    silentAudio.current?.pause();
-    bargedIn.current = true;
-    onUserSpeech();
-    busyRef.current = false;
-    setSpeaking(false);
-    loudSince.current = null;
-    listen({ barge: true });
-    bargingRef.current = false;
-  }
-
-  /** End of a turn: clear busy, and in continuous mode go back to Listening. */
-  function finishTurn() {
-    disposeRecognition();
-    manualStopRef.current = null;
-    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = true; });
-    if (openRef.current) setAudioSession("play-and-record");
-    busyRef.current = false;
-    setBusy(false);
-    setHearing(false);
-    if (continuousRef.current && openRef.current) {
-      // Programmatic restart (outside a gesture). listen() falls back to idle if WebKit rejects it.
-      window.setTimeout(() => restartRef.current(), 300);
+  /** Everything iOS needs inside the tap itself: audio session, silent audio, speech unlock. */
+  function primeFromGesture() {
+    setAudioSession("play-and-record");
+    primeSynth();
+    try {
+      const a = (silentAudio.current ??= new Audio(SILENT_WAV));
+      a.muted = true;
+      a.setAttribute("playsinline", "");
+      const p = a.play();
+      if (p) void p.then(() => a.pause()).catch(() => {});
+    } catch {
+      // no HTMLAudioElement: nothing to unlock
     }
   }
 
+  function talk() {
+    primeFromGesture();
+    // A tap while the assistant speaks is a barge-in.
+    if (session.phase === "speaking") bargedIn.current = true;
+    if (session.phase === "speaking") session.bargeIn();
+    else session.tap();
+  }
+
+  function openVoice() {
+    if (live.current.open) return;
+    live.current.open = true;
+    setOpen(true);
+    primeFromGesture();
+    session.start(); // microphone opens in the same tap; the assistant never speaks first
+    if (!iosSingle) {
+      void startEnergyMonitor({
+        isSpeaking: () => session.phase === "speaking",
+        onBarge: () => {
+          bargedIn.current = true;
+          session.bargeIn();
+        },
+      }).then(
+        (stop) => (live.current.open ? (stopEnergy.current = stop) : stop()),
+        () => {}, // no mic energy: barge-in by tap still works
+      );
+    }
+  }
+
+  function closeVoice() {
+    live.current.open = false;
+    setOpen(false);
+    session.stop();
+    stopEnergy.current?.();
+    stopEnergy.current = null;
+    // Anything recorded is queued for review, never dropped.
+    if (turns.hasDraft()) void turns.flush().then(setReply).catch(() => {});
+  }
+
+  const toggleContinuous = (on: boolean) => {
+    live.current.continuous = on;
+    setContinuous(on);
+  };
+
+  // Alt+V / Alt+C (never Ctrl+V or Ctrl+R, which the browser owns).
+  const keys = useRef({ openVoice, closeVoice, toggleContinuous });
+  keys.current = { openVoice, closeVoice, toggleContinuous };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.repeat) return;
       if (e.code === "KeyV") {
         e.preventDefault();
-        actions.current.toggle();
+        if (live.current.open) keys.current.closeVoice();
+        else keys.current.openVoice();
       } else if (e.code === "KeyC") {
         e.preventDefault();
-        actions.current.toggleContinuous();
+        keys.current.toggleContinuous(!live.current.continuous);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  function speak(text: string, onDone?: () => void, onStart?: () => void) {
-    if (!text.trim()) {
-      finishTurn();
-      onDone?.();
-      return;
-    }
-    const token = ++speakToken.current;
-    window.speechSynthesis?.cancel();
-    // Release the mic BEFORE playback so iOS leaves capture mode and routes to speaker/Bluetooth.
-    releaseRecognitionForPlayback();
-    setAudioSession("playback");
-    hearingRef.current = false;
-    setSpeaking(true);
-    let finished = false;
-    const done = () => {
-      if (finished || token !== speakToken.current) return;
-      finished = true;
-      setSpeaking(false);
-      finishTurn();
-      onDone?.();
-    };
-    const started = () => { setSpeaking(true); onStart?.(); };
-    // Native on-device speech only: no external TTS service or key.
-    speakWithSynth(text, token, started, done);
-  }
-
-  function speakWithSynth(text: string, token: number, onStart: () => void, done: () => void) {
-    const synth = window.speechSynthesis;
-    const chunks = speechChunks(text);
-    if (!synth || !chunks.length) return done();
-    let started = false;
-    withVoice((v) => {
-      if (token !== speakToken.current) return;
-      synth.cancel();
-      if (synth.paused) synth.resume();
-      chunks.forEach((chunk, i) => {
-        const u = new SpeechSynthesisUtterance(chunk);
-        if (v) {
-          u.voice = v;
-          u.lang = v.lang;
-        }
-        u.volume = 1;
-        u.rate = 1;
-        u.pitch = voiceRef.current === "male" ? 0.92 : 1;
-        if (i === 0) u.onstart = () => {
-          started = true;
-          if (token === speakToken.current) onStart();
-        };
-        if (i === chunks.length - 1) u.onend = done;
-        u.onerror = (e) => {
-          console.error("[voice] speechSynthesis utterance error", e.error, e);
-          done();
-        };
-        try {
-          synth.speak(u);
-        } catch (err) {
-          console.error("[voice] speechSynthesis.speak failed", err);
-          done();
-        }
-      });
-      window.setTimeout(() => {
-        if (started || token !== speakToken.current) return;
-        console.error("[voice] speechSynthesis produced no onstart; ending turn");
-        synth.cancel();
-        done();
-      }, SPEAK_START_TIMEOUT_MS);
-    });
-  }
-
-  /** Queue everything gathered so far for review. Falls back to raw text so nothing recorded is lost. */
-  async function flushDraft(): Promise<string> {
-    const raw = draft.current.join(" ").trim();
-    draft.current = [];
-    if (!raw) return "There is nothing to store yet. Tell me what to remember.";
-    let payload = {
-      raw,
-      keyPoints: [raw.slice(0, 200)],
-      keywords: extractKeywords(raw),
-      action: "memory" as ReviewAction,
-      conceptId: null as string | null,
-      conceptName: null as string | null,
-      suggestedName: null as string | null,
-    };
-    try {
-      const plan = await voiceIngest({ data: { transcript: raw } });
-      if (plan.ok) {
-        payload = {
-          raw: plan.raw,
-          keyPoints: plan.keyPoints,
-          keywords: plan.tags,
-          action: plan.action,
-          conceptId: plan.suggested?.id ?? null,
-          conceptName: plan.suggested?.name ?? null,
-          suggestedName: plan.action === "memory" ? (plan.suggested?.name ?? null) : plan.newName,
-        };
-      }
-    } catch (err) {
-      console.error("[voice] ingest failed, queueing raw", err);
-    }
-    const q = await queueReview({ data: payload });
-    if (!q.ok) {
-      draft.current = [raw];
-      throw new Error(q.error);
-    }
-    void qc.invalidateQueries({ queryKey: ["reviews"] });
-    return payload.conceptName ? `Stored for review under ${payload.conceptName}.` : "Stored for review as a new memory.";
-  }
-
-  async function handle(text: string) {
-    const clean = text.trim();
-    if (!clean) {
-      finishTurn();
-      return;
-    }
-    setLine(clean);
-    busyRef.current = true;
-    setBusy(true);
-    const bargeIn = bargedIn.current;
-    bargedIn.current = false;
-    try {
-      // Completion cue: queue what we gathered for review right away. No more questions.
-      if (COMPLETION_CUE.test(clean)) {
-        const said = await flushDraft();
-        setReply(said);
-        speak(said);
-        return;
-      }
-      if (CANCEL_CUE.test(clean)) {
-        draft.current = [];
-        const said = "Okay, I discarded that.";
-        setReply(said);
-        speak(said);
-        return;
-      }
-      const remember = clean.match(/^(remember|save|add a memory|note that|i want to remember)\s+(.+)/i);
-      const note = remember?.[2] ?? (clean.split(/\s+/).length > 18 ? clean : null);
-      if (note) {
-        draft.current.push(note);
-        void recordVoiceTurn({ data: { bargeIn, keywords: extractKeywords(note) } }).catch(() => {});
-        const said = "Got it. Keep going, or say I'm done to store it.";
-        setReply(said);
-        speak(said);
-        return;
-      }
-      void recordVoiceTurn({ data: { bargeIn, keywords: extractKeywords(clean) } }).catch(() => {});
-      const res = await askAssistant({ data: { prompt: clean, voice: true } });
-      const said = res.ok ? res.content : "I could not reach the brain just now.";
-      setReply(said);
-      speak(said);
-    } catch (err) {
-      console.error("[voice]", err);
-      const detail = err instanceof Error ? err.message : "";
-      const said = "Something went wrong. Please try again.";
-      setReply(detail ? `${said} (${detail.slice(0, 120)})` : said);
-      speak(said);
-    }
-  }
-
-  const handled = useRef(false);
-
-  function listen(opts: { barge?: boolean } = {}) {
-    if (!openRef.current || busyRef.current || isStartingRef.current) return;
-    if (speakingRef.current && !opts.barge) return;
-    if (restartTimer.current) window.clearTimeout(restartTimer.current);
-    restartTimer.current = null;
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      setReply("Voice input is not available in this browser.");
-      return;
-    }
-    // Never reuse an ended recognition: tear the old one down completely and build a fresh instance.
-    disposeRecognition();
-    handled.current = false;
-    const rec = new SR();
-    rec.lang = "en-US";
-    const iosSingle = recognitionOnly.current || preferRecognitionOnly();
-    recognitionOnly.current = iosSingle;
-    // iOS WebKit: single-utterance sessions (continuous=false), chained manually. Desktop streams and
-    // uses our own 2 s silence timer to decide when the thought is over.
-    rec.continuous = !iosSingle;
-    rec.interimResults = true;
-    // `base` carries text across recognition sessions the browser ends on its own.
-    const buffer = { text: "", base: "", interim: "" };
-    const commit = () => {
-      if (handled.current || !buffer.text.trim()) return;
-      handled.current = true;
-      if (silence.current) window.clearTimeout(silence.current);
-      silence.current = null;
-      setHearing(false);
-      try { rec.stop(); } catch { /* already stopped */ }
-      void handle(buffer.text.trim());
-    };
-    rec.onresult = (e) => {
-      // Echo shield: never act on transcripts heard while the AI is talking.
-      if (speakingRef.current || recRef.current !== rec) return;
-      // User speech detected.
-      onUserSpeech();
-      // Show interim text, but only act on finalised results (partials caused repeat replies).
-      let finalText = "";
-      let interim = "";
-      for (let i = 0; i < e.results.length; i++) {
-        const r = e.results[i];
-        const t = r?.[0]?.transcript ?? "";
-        if (r?.isFinal) finalText += t + " ";
-        else interim += t;
-      }
-      buffer.text = `${buffer.base} ${finalText}`.trim();
-      buffer.interim = interim.trim();
-      setLine(`${buffer.base} ${finalText}${interim}`.trim());
-      // Re-arm on every result (interim too): only a full VAD_SILENCE_MS of quiet ends the thought.
-      if (silence.current) window.clearTimeout(silence.current);
-      if (buffer.text || interim.trim()) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
-    };
-    const scheduleRestart = (fn: () => void) => {
-      if (restartTimer.current) window.clearTimeout(restartTimer.current);
-      restartTimer.current = window.setTimeout(() => {
-        restartTimer.current = null;
-        if (!openRef.current || speakingRef.current || busyRef.current || isStartingRef.current || recRef.current !== rec) return;
-        fn();
-      }, STATE_DEBOUNCE_MS);
-    };
-    rec.onstart = () => {
-      isStartingRef.current = false;
-      if (recRef.current !== rec || !openRef.current) return;
-    };
-    manualStopRef.current = () => {
-      if (recRef.current !== rec) return;
-      if (buffer.text.trim()) { commit(); return; }
-      // Stop with nothing said: back to idle, never thinking.
-      wantListenRef.current = false;
-      if (silence.current) window.clearTimeout(silence.current);
-      silence.current = null;
-      stopRecognition();
-      setHearing(false);
-    };
-    rec.onerror = (e) => {
-      isStartingRef.current = false;
-      if (e?.error === "no-speech") {
-        // Silence is not a turn: no TTS, no AI. Go quietly idle; the next tap listens again.
-        wantListenRef.current = false;
-        if (!handled.current && !buffer.text.trim()) {
-          setHearing(false);
-          return;
-        }
-      }
-      if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
-        wantListenRef.current = false;
-        setReply("Microphone access was blocked. Allow it in Settings and tap again.");
-        if (recRef.current === rec) disposeRecognition();
-        hearingRef.current = false;
-        setHearing(false);
-        return;
-      }
-      if (!handled.current) {
-        busyRef.current = false;
-        setHearing(false);
-      }
-    };
-    rec.onend = () => {
-      isStartingRef.current = false;
-      if (!openRef.current || recRef.current !== rec || speakingRef.current) return;
-      // Safari can end a session without finalising the last words: keep them as final text.
-      if (!handled.current && buffer.interim) {
-        buffer.text = `${buffer.text} ${buffer.interim}`.trim();
-        buffer.interim = "";
-      }
-      if (!handled.current && buffer.text.trim() && iosSingle) {
-        // iOS single-utterance session ended after real speech = engine-confirmed silence. Submit once.
-        if (silence.current) window.clearTimeout(silence.current);
-        silence.current = null;
-        commit();
-        return;
-      }
-      if (!handled.current && buffer.text.trim()) {
-        // Session ended after real speech. Never call start() again on an ended instance: submit once.
-        void scheduleRestart;
-        commit();
-        return;
-      }
-      if (silence.current) window.clearTimeout(silence.current);
-      silence.current = null;
-      if (!handled.current) {
-        // Empty transcript guard: nothing said → no submit, no Thinking, no audio, no restart loop.
-        // Go idle; the user taps again (or speaks after the next continuous reply) to listen.
-        wantListenRef.current = false;
-        setHearing(false);
-      }
-    };
-    recRef.current = rec;
-    isStartingRef.current = true;
-    try {
-      // Synchronous in the caller's stack: from a tap this satisfies iOS's user-gesture rule.
-      rec.start();
-      hearingRef.current = true;
-      syncPhase(true);
-    } catch (err) {
-      // Blocked (e.g. programmatic continuous restart outside a gesture): go idle, require a tap.
-      console.error("[voice] recognition start failed", err);
-      if (recRef.current === rec) disposeRecognition();
-      wantListenRef.current = false;
-      hearingRef.current = false;
-      setHearing(false);
-    } finally {
-      // Release the lock after the start call settles (onend/onerror also clear it).
-      queueMicrotask(() => { isStartingRef.current = false; });
-    }
-    // Desktop only: energy monitor for barge-in starts AFTER recognition, never awaited. Skipped on iOS.
-    if (!iosSingle) void ensureMic();
-  }
-
-  /** Direct tap on "Talk to the brain": resume audio + start recognition synchronously. */
-  function onTalkTap() {
-    // Tap while listening = stop: commits only a non-empty transcript.
-    if (hearingRef.current && recRef.current && manualStopRef.current) {
-      manualStopRef.current();
-      return;
-    }
-    beginListening();
-  }
-
-  /** Tap → listening, synchronously. Never sets busy/thinking. */
-  function beginListening() {
-    primeFromGesture();
-    wantListenRef.current = true;
-    busyRef.current = false;
-    hearingRef.current = true;
-    syncPhase(true);
-    listen();
-  }
-
-  function closeVoice() {
-    if (silence.current) window.clearTimeout(silence.current);
-    silence.current = null;
-    speakToken.current++;
-    speakingRef.current = false;
-    stopRecognition();
-    releaseMic();
-    wantListenRef.current = false;
-    manualStopRef.current = null;
-    openRef.current = false;
-    setOpen(false);
-    busyRef.current = false;
-    setSpeaking(false);
-    setHearing(false);
-    window.speechSynthesis?.cancel();
-    silentAudio.current?.pause();
-    disposeRecognition();
-    if (draft.current.length) void flushDraft().catch((e) => console.error("[voice]", e));
-  }
-
-  /** One click (or Alt+V): open the panel and start the microphone straight away. */
-  function openVoice() {
-    openRef.current = true;
-    setOpen(true);
-    // Sync in this tap: listening phase, audio unlock, recognition.start(). The assistant never speaks first.
-    beginListening();
-  }
-
-  restartRef.current = () => { if (openRef.current) listen(); };
-  actions.current = {
-    toggle: () => (openRef.current ? closeVoice() : openVoice()),
-    toggleContinuous: () => {
-      const next = !continuousRef.current;
-      continuousRef.current = next;
-      setContinuous(next);
-    },
-  };
 
   if (!open) {
     return (
@@ -797,6 +257,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     );
   }
 
+  const busy = phase === "thinking";
   return (
     <div className="pointer-events-auto absolute left-3 top-10 z-30 w-[min(100%-1.5rem,18rem)] rounded-2xl border border-[#6a2ca8]/40 bg-black/80 p-3 text-white backdrop-blur-md">
       <div className="flex items-center justify-between">
@@ -823,20 +284,16 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         ))}
       </div>
       <label className="mt-2 flex items-center gap-2 text-[11px] text-white/80">
-        <input
-          type="checkbox"
-          checked={continuous}
-          onChange={(e) => { setContinuous(e.target.checked); continuousRef.current = e.target.checked; }}
-        />
+        <input type="checkbox" checked={continuous} onChange={(e) => toggleContinuous(e.target.checked)} />
         Continuous conversation
       </label>
       <button
         type="button"
-        onClick={onTalkTap}
+        onClick={talk}
         disabled={busy}
         className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#6a2ca8] py-2 text-sm"
       >
-        <Mic className="size-4" /> {hearing ? "Listening…" : phase === "speaking" ? "Speaking…" : phase === "thinking" ? "Thinking…" : "Talk to the brain"}
+        <Mic className="size-4" /> {continuous && iosSingle && phase === "idle" ? "Tap to continue" : LABEL[phase]}
       </button>
       <p className="mt-1 hidden text-[10px] leading-tight text-white/45 sm:block">Alt+V to close · Alt+C toggles continuous</p>
       {line ? <p className="mt-2 text-[11px] text-white/60">You: {line}</p> : null}
