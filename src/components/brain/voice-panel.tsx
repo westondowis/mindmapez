@@ -1,8 +1,9 @@
 import { Mic, Volume2 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
-import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
+import { listReviews, queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import { SILENT_WAV, VAD_SILENCE_MS, preferRecognitionOnly } from "@/lib/voice";
 import { createTurnProcessor } from "@/lib/voice-ingest";
 import { startEnergyMonitor } from "@/lib/voice-energy";
@@ -70,6 +71,7 @@ const LABEL: Record<Phase, string> = {
 
 export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }) {
   const qc = useQueryClient();
+  const pending = useQuery({ queryKey: ["reviews"], queryFn: () => listReviews() }).data?.length ?? 0;
   const [open, setOpen] = useState(false);
   const [voice, setVoice] = useState<VoiceChoice>("female");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -296,6 +298,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         <Mic className="size-4" /> {continuous && iosSingle && phase === "idle" ? "Tap to continue" : LABEL[phase]}
       </button>
       <p className="mt-1 hidden text-[10px] leading-tight text-white/45 sm:block">Alt+V to close · Alt+C toggles continuous</p>
+      {pending > 0 ? (
+        <Link to="/review" className="mt-2 block rounded-lg bg-[#fbbf24]/15 px-2.5 py-1.5 text-center text-[12px] font-medium text-[#fcd34d]">
+          Review {pending} pending note{pending === 1 ? "" : "s"} →
+        </Link>
+      ) : null}
       {line ? <p className="mt-2 text-[11px] text-white/60">You: {line}</p> : null}
       {reply ? (
         <p className="mt-1 flex items-start gap-1 text-[12px] leading-snug">

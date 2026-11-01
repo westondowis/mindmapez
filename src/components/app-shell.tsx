@@ -15,6 +15,20 @@ import { useRef } from "react";
 import { ImportDropHost } from "@/components/import-drop-host";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { listReviews } from "@/lib/server/reviews";
+
+/** Count of voice notes waiting for approval, shown on the Review tab (desktop and mobile). */
+function ReviewBadge() {
+  const q = useQuery({ queryKey: ["reviews"], queryFn: () => listReviews(), refetchInterval: 30_000 });
+  const n = q.data?.length ?? 0;
+  if (!n) return null;
+  return (
+    <span className="absolute -right-2 -top-1.5 grid min-w-4 place-items-center rounded-full bg-highlight px-1 text-[9px] font-semibold leading-4 text-background">
+      {n > 9 ? "9+" : n}
+    </span>
+  );
+}
 
 const NAV = [
   { to: "/", label: "Mesh", icon: Network, exact: true },
@@ -85,7 +99,10 @@ export function AppShell({
                       : "text-muted-foreground hover:bg-primary/10 hover:text-foreground",
                   )}
                 >
-                  <Icon className="size-5" />
+                  <span className="relative">
+                    <Icon className="size-5" />
+                    {item.to === "/review" ? <ReviewBadge /> : null}
+                  </span>
                 </Link>
               );
             })}
@@ -139,6 +156,7 @@ export function AppShell({
               NAV[1],
               NAV[4],
               NAV[5],
+              NAV[7],
               { to: "/settings", label: "More", icon: Compass },
             ] as const
           ).map((item) => {
@@ -162,7 +180,10 @@ export function AppShell({
                   active ? "text-primary" : "text-muted-foreground",
                 )}
               >
-                <Icon className="size-5" />
+                <span className="relative">
+                  <Icon className="size-5" />
+                  {item.to === "/review" ? <ReviewBadge /> : null}
+                </span>
                 {item.label}
               </Link>
             );
