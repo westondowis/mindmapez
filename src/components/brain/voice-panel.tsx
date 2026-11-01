@@ -21,17 +21,13 @@ declare global {
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import {
-  GREETING_TTS_TIMEOUT_MS,
   SPEAK_START_TIMEOUT_MS,
-  MAX_EMPTY_RESTARTS,
   SILENT_WAV,
-  AUTO_OFF_MS,
   BARGE_HOLD_MS,
   BARGE_RMS_THRESHOLD,
   STATE_DEBOUNCE_MS,
   CANCEL_CUE,
   COMPLETION_CUE,
-  GREETING_DELAY_MS,
   SPEECH_HOLD_MS,
   SPEECH_RMS_THRESHOLD,
   VAD_SILENCE_MS,
@@ -96,7 +92,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const isStartingRef = useRef(false);
   /** True while the user wants the mic open (tap → close/stop). Empty onend restarts only while set. */
   const wantListenRef = useRef(false);
-  const emptyRestarts = useRef(0);
   const manualStopRef = useRef<(() => void) | null>(null);
   const silentAudio = useRef<HTMLAudioElement | null>(null);
   const bargingRef = useRef(false);
@@ -106,9 +101,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [continuous, setContinuous] = useState(false);
   const continuousRef = useRef(false);
   const busyRef = useRef(false);
-  const greetTimer = useRef<number | null>(null);
-  const offTimer = useRef<number | null>(null);
-  const greeted = useRef(false);
   const speakingRef = useRef(false);
   /** Bumped on every speak/cancel so stale utterance callbacks are ignored after a barge-in. */
   const speakToken = useRef(0);
@@ -182,7 +174,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       onSpeaking(false);
       busyRef.current = false;
       hearingRef.current = false;
-      clearIdleTimers();
       // Mark stream/energy state dirty: the next ensureMic() reacquires from a fresh tap.
       releaseMic();
       syncPhase();
@@ -212,7 +203,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       window.speechSynthesis?.removeEventListener?.("voiceschanged", warm);
       window.speechSynthesis?.cancel();
       releaseMic();
-      clearIdleTimers();
       if (phaseTimer.current) window.clearTimeout(phaseTimer.current);
       if (restartTimer.current) window.clearTimeout(restartTimer.current);
     };
@@ -283,23 +273,19 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     window.setTimeout(go, 1000);
   }
 
-  function clearIdleTimers() {
-    if (greetTimer.current) window.clearTimeout(greetTimer.current);
-    if (offTimer.current) window.clearTimeout(offTimer.current);
-    greetTimer.current = null;
-    offTimer.current = null;
-  }
-
-  /** Any user speech: cancel the greeting and the auto-off. */
+  /** Desktop energy monitor hook for detected user speech (no greeting/auto-off timers exist any more). */
   function onUserSpeech() {
-    clearIdleTimers();
-    greeted.current = false;
+    /* intentionally empty: the assistant never speaks first */
   }
 
   /** Acquire the mic ONCE per voice session and watch its RMS energy every frame (Listening AND Speaking). */
   function ensureMic(): Promise<void> {
     // iOS WebKit: SpeechRecognition owns the audio session; a parallel getUserMedia steals it.
-    if (recognitionOnly.current) return Promise.resolve();
+    // iOS: NEVER call getUserMedia alongside webkitSpeechRecognition (single audio engine).
+    if (recognitionOnly.current || preferRecognitionOnly()) {
+      recognitionOnly.current = true;
+      return Promise.resolve();
+    }
     if (streamRef.current || mic.current) return Promise.resolve();
     if (micPending.current) return micPending.current;
     if (!navigator.mediaDevices?.getUserMedia) return Promise.resolve();
@@ -388,7 +374,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     busyRef.current = false;
     setBusy(false);
     setHearing(false);
-    if (continuousRef.current || greeted.current) window.setTimeout(() => restartRef.current(), 300);
+    if (continuousRef.current && openRef.current) window.setTimeout(() => restartRef.current(), 300);
   }
 
   useEffect(() => {
@@ -560,7 +546,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   const handled = useRef(false);
 
-  function listen(opts: { barge?: boolean; greet?: boolean } = {}) {
+  function listen(opts: { barge?: boolean } = {}) {
     if (!openRef.current || busyRef.current || isStartingRef.current) return;
     if (speakingRef.current && !opts.barge) return;
     if (restartTimer.current) window.clearTimeout(restartTimer.current);
@@ -574,8 +560,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     handled.current = false;
     const rec = new SR();
     rec.lang = "en-US";
-    // Always stream continuously: our own 2 s silence timer decides when the thought is over.
-    rec.continuous = true;
+    const iosSingle = recognitionOnly.current || preferRecognitionOnly();
+    recognitionOnly.current = iosSingle;
+    // iOS WebKit: single-utterance sessions (continuous=false), chained manually. Desktop streams and
+    // uses our own 2 s silence timer to decide when the thought is over.
+    rec.continuous = !iosSingle;
     rec.interimResults = true;
     // `base` carries text across recognition sessions the browser ends on its own.
     const buffer = { text: "", base: "", interim: "" };
@@ -591,7 +580,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     rec.onresult = (e) => {
       // Echo shield: never act on transcripts heard while the AI is talking.
       if (speakingRef.current || recRef.current !== rec) return;
-      // Any speech at all cancels the greeting and auto-off timers.
+      // User speech detected.
       onUserSpeech();
       // Show interim text, but only act on finalised results (partials caused repeat replies).
       let finalText = "";
@@ -620,8 +609,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     rec.onstart = () => {
       isStartingRef.current = false;
       if (recRef.current !== rec || !openRef.current) return;
-      // Mic confirmed live: only now may the 3 s greeting timer start.
-      if (opts.greet) armGreeting();
     };
     manualStopRef.current = () => {
       if (recRef.current !== rec) return;
@@ -635,6 +622,15 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     };
     rec.onerror = (e) => {
       isStartingRef.current = false;
+      if (e?.error === "no-speech") {
+        // Silence is not a turn: no TTS, no AI. Go quietly idle; the next tap listens again.
+        console.log("[SpeechRecognition Error]: no-speech");
+        wantListenRef.current = false;
+        if (!handled.current && !buffer.text.trim()) {
+          setHearing(false);
+          return;
+        }
+      }
       if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
         wantListenRef.current = false;
         setReply("Microphone access was blocked. Allow it in Settings and tap again.");
@@ -652,7 +648,13 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         buffer.text = `${buffer.text} ${buffer.interim}`.trim();
         buffer.interim = "";
       }
-      if (buffer.text.trim()) emptyRestarts.current = 0;
+      if (!handled.current && buffer.text.trim() && iosSingle) {
+        // iOS single-utterance session ended after real speech = engine-confirmed silence. Submit once.
+        if (silence.current) window.clearTimeout(silence.current);
+        silence.current = null;
+        commit();
+        return;
+      }
       if (!handled.current && buffer.text.trim()) {
         // The browser ended the session mid-thought (a brief pause). Don't dispatch yet:
         // keep the pending 2 s silence timer and resume listening with the text carried over.
@@ -672,25 +674,12 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         return;
       }
       if (silence.current) window.clearTimeout(silence.current);
+      silence.current = null;
       if (!handled.current) {
-        if (draft.current.length && !busyRef.current && !wantListenRef.current) {
-          setHearing(false);
-          busyRef.current = true;
-          setBusy(true);
-          void flushDraft()
-            .then((said) => { setReply(said); speak(said); })
-            .catch(() => finishTurn());
-          return;
-        }
-        // Empty transcript guard: nothing said → never handle()/thinking. Keep listening while wanted.
-        if ((wantListenRef.current || continuousRef.current) && !busyRef.current && emptyRestarts.current < MAX_EMPTY_RESTARTS) {
-          emptyRestarts.current++;
-          hearingRef.current = true;
-          scheduleRestart(() => listen());
-        } else {
-          wantListenRef.current = false;
-          setHearing(false);
-        }
+        // Empty transcript guard: nothing said → no submit, no Thinking, no audio, no restart loop.
+        // Go idle; the user taps again (or speaks after the next continuous reply) to listen.
+        wantListenRef.current = false;
+        setHearing(false);
       }
     };
     recRef.current = rec;
@@ -700,8 +689,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       rec.start();
       hearingRef.current = true;
       syncPhase(true);
-      // Browsers without onstart: treat a non-throwing start() as confirmation.
-      if (opts.greet && !("onstart" in rec)) armGreeting();
     } catch (err) {
       console.error("[voice] recognition start failed", err);
       setHearing(false);
@@ -709,8 +696,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       // Release the lock after the start call settles (onend/onerror also clear it).
       queueMicrotask(() => { isStartingRef.current = false; });
     }
-    // Desktop only: energy monitor for barge-in/timers starts AFTER recognition, never awaited.
-    void ensureMic();
+    // Desktop only: energy monitor for barge-in starts AFTER recognition, never awaited. Skipped on iOS.
+    if (!iosSingle) void ensureMic();
   }
 
   /** Direct tap on "Talk to the brain": resume audio + start recognition synchronously. */
@@ -720,73 +707,26 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       manualStopRef.current();
       return;
     }
-    beginListening(false);
+    beginListening();
   }
 
   /** Tap → listening, synchronously. Never sets busy/thinking. */
-  function beginListening(greet: boolean) {
+  function beginListening() {
     primeFromGesture();
     wantListenRef.current = true;
-    emptyRestarts.current = 0;
     busyRef.current = false;
     hearingRef.current = true;
     syncPhase(true);
-    listen({ greet });
-  }
-
-  /** On open: greet only after GREETING_DELAY_MS of silence, then auto-off after AUTO_OFF_MS more. */
-  function armGreeting() {
-    clearIdleTimers();
-    greetTimer.current = window.setTimeout(() => {
-      greetTimer.current = null;
-      if (!openRef.current || busyRef.current || handled.current) return;
-      greeted.current = true;
-      const hi = "Hey, what's up?";
-      setReply(hi);
-      let settled = false;
-      const recover = () => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(guard);
-        speakToken.current++;
-        window.speechSynthesis?.cancel();
-        busyRef.current = false;
-        setSpeaking(false);
-        if (openRef.current && wantListenRef.current) listen();
-      };
-      // WebKit can silently refuse speech: if it hasn't started in 5 s, drop it and listen again.
-      const guard = window.setTimeout(recover, GREETING_TTS_TIMEOUT_MS);
-      try {
-        speak(
-          hi,
-          () => {
-            if (settled) return;
-            settled = true;
-            window.clearTimeout(guard);
-            if (!openRef.current || !greeted.current) return;
-            offTimer.current = window.setTimeout(() => {
-              offTimer.current = null;
-              if (greeted.current && !busyRef.current) closeVoice();
-            }, AUTO_OFF_MS);
-          },
-          () => window.clearTimeout(guard),
-        );
-      } catch (err) {
-        console.error("[voice] greeting playback failed", err);
-        recover();
-      }
-    }, GREETING_DELAY_MS);
+    listen();
   }
 
   function closeVoice() {
-    clearIdleTimers();
     if (silence.current) window.clearTimeout(silence.current);
     silence.current = null;
     speakToken.current++;
     speakingRef.current = false;
     stopRecognition();
     releaseMic();
-    greeted.current = false;
     wantListenRef.current = false;
     manualStopRef.current = null;
     openRef.current = false;
@@ -802,10 +742,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   /** One click (or Alt+V): open the panel and start the microphone straight away. */
   function openVoice() {
     openRef.current = true;
-    greeted.current = false;
     setOpen(true);
-    // Sync in this tap: listening phase, audio unlock, recognition.start(). Greeting arms on onstart.
-    beginListening(true);
+    // Sync in this tap: listening phase, audio unlock, recognition.start(). The assistant never speaks first.
+    beginListening();
   }
 
   restartRef.current = () => { if (openRef.current) listen(); };

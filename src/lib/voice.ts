@@ -52,10 +52,6 @@ export function verbosityHint(t: { turns: number; bargeIns: number; topics: stri
 
 /** Silence after the last recognised speech before a thought is dispatched (never below 2 s). */
 export const VAD_SILENCE_MS = 2000;
-/** After the voice panel opens, wait this long in silence before greeting. */
-export const GREETING_DELAY_MS = 3000;
-/** After the greeting, power voice mode down if the user still says nothing. */
-export const AUTO_OFF_MS = 5000;
 /** Mic RMS (0..1 time-domain) that counts as the user speaking. */
 export const SPEECH_RMS_THRESHOLD = 0.045;
 /** Energy must stay above the threshold this long before it counts (filters clicks and pops). */
@@ -97,10 +93,6 @@ export function preferRecognitionOnly(): boolean {
   return isIOSWebKit() && !!w.webkitSpeechRecognition;
 }
 
-/** Max wait for the greeting TTS to start before falling back to listening. */
-export const GREETING_TTS_TIMEOUT_MS = 5000;
-/** Cap on consecutive empty-session recognition restarts (~1 min) before going idle. */
-export const MAX_EMPTY_RESTARTS = 40;
 /** 1-sample silent WAV used to unlock iOS audio playback inside the tap. */
 export const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 
