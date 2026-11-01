@@ -118,37 +118,3 @@ export async function transcribeAudio(dataUrl: string): Promise<string | null> {
   }
 }
 
-const TTS_VOICES = { female: "eve", male: "rex" } as const;
-
-/** xAI text-to-speech. Returns an mp3 data URL playable by an HTMLAudioElement. */
-export async function synthesizeSpeech(
-  text: string,
-  voice: "male" | "female",
-): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> {
-  const apiKey = process.env.XAI_API_KEY;
-  if (!apiKey) return { ok: false, error: "XAI_API_KEY not configured" };
-  const clean = text.trim().slice(0, 4000);
-  if (!clean) return { ok: false, error: "Empty text" };
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30_000);
-  try {
-    const res = await fetch("https://api.x.ai/v1/tts", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ text: clean, voice_id: TTS_VOICES[voice] ?? "eve", language: "en" }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      return { ok: false, error: `TTS ${res.status}: ${detail.slice(0, 200)}` };
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (!buf.length) return { ok: false, error: "TTS returned no audio" };
-    const type = res.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
-    return { ok: true, dataUrl: `data:${type.startsWith("audio/") ? type : "audio/mpeg"};base64,${buf.toString("base64")}` };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "TTS failed" };
-  } finally {
-    clearTimeout(timer);
-  }
-}

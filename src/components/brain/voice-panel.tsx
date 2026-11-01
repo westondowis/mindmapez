@@ -18,7 +18,7 @@ declare global {
     webkitSpeechRecognition?: new () => SpeechRecognition;
   }
 }
-import { askAssistant, speakText, voiceIngest } from "@/lib/server/assistant";
+import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import {
   SPEAK_START_TIMEOUT_MS,
@@ -410,33 +410,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /** Play a server-TTS data URL through an HTMLAudioElement primed on the tap. Resolves true if it played to the end. */
-  function playAudioUrl(url: string, token: number, onStart: () => void): Promise<boolean> {
-    return new Promise((resolve) => {
-      let settled = false;
-      const end = (ok: boolean) => { if (!settled) { settled = true; resolve(ok); } };
-      try {
-        const a = (silentAudio.current ??= new Audio());
-        a.pause();
-        a.muted = false;
-        a.volume = 1;
-        a.setAttribute("playsinline", "");
-        (a as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
-        a.onended = () => end(true);
-        a.onerror = () => { console.error("[voice] TTS audio element error", a.error); end(false); };
-        a.onplaying = () => { if (token === speakToken.current) onStart(); };
-        a.src = url;
-        const p = a.play();
-        if (p) p.catch((err) => { console.error("[voice] TTS audio.play() rejected", err); end(false); });
-        // Safety: never hang in Speaking if the element stalls.
-        window.setTimeout(() => { if (a.paused && !a.ended && a.currentTime === 0) { console.error("[voice] TTS audio never started"); end(false); } }, 8000);
-      } catch (err) {
-        console.error("[voice] TTS audio playback failed", err);
-        end(false);
-      }
-    });
-  }
-
   function speak(text: string, onDone?: () => void, onStart?: () => void) {
     if (!text.trim()) {
       finishTurn();
@@ -459,24 +432,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       onDone?.();
     };
     const started = () => { setSpeaking(true); onStart?.(); };
-    void (async () => {
-      try {
-        const res = await speakText({ data: { text, voice: voiceRef.current } });
-        if (token !== speakToken.current) return;
-        if (res.ok && res.dataUrl) {
-          const ok = await playAudioUrl(res.dataUrl, token, started);
-          if (token !== speakToken.current) return;
-          if (ok) return done();
-        } else {
-          console.error("[voice] server TTS failed", res.error);
-        }
-      } catch (err) {
-        console.error("[voice] server TTS request failed", err);
-      }
-      if (token !== speakToken.current) return;
-      // Last resort only: speechSynthesis (often silent on iOS). Watchdog guarantees no hang.
-      speakWithSynth(text, token, started, done);
-    })();
+    // Native on-device speech only: no external TTS service or key.
+    speakWithSynth(text, token, started, done);
   }
 
   function speakWithSynth(text: string, token: number, onStart: () => void, done: () => void) {
@@ -495,6 +452,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           u.lang = v.lang;
         }
         u.volume = 1;
+        u.rate = 1;
         u.pitch = voiceRef.current === "male" ? 0.92 : 1;
         if (i === 0) u.onstart = () => {
           started = true;
@@ -691,7 +649,6 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       isStartingRef.current = false;
       if (e?.error === "no-speech") {
         // Silence is not a turn: no TTS, no AI. Go quietly idle; the next tap listens again.
-        console.log("[SpeechRecognition Error]: no-speech");
         wantListenRef.current = false;
         if (!handled.current && !buffer.text.trim()) {
           setHearing(false);
