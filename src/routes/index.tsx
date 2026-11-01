@@ -49,6 +49,7 @@ function MeshPage() {
           <MeshCanvas
             graph={q.data}
             onSelectMemory={setOpenId}
+            onDismissMemory={() => setOpenId(null)}
             guide={touring}
             spotlightId={touring ? ((guidePick as BrainSectorId | null) ?? "frontal") : null}
             onGuidePick={(id: BrainSectorId) => setGuidePick(id)}

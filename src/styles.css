@@ -253,9 +253,9 @@ html, body {
    segment as the current passes (the delay per segment is set inline). */
 @keyframes synapse-flow {
   0%, 100% { opacity: 0.82; filter: drop-shadow(0 0 2px #b44cff); }
-  50% { opacity: 1; filter: drop-shadow(0 0 7px #88bbd8); }
+  50% { opacity: 1; filter: drop-shadow(0 0 9px #88bbd8) drop-shadow(0 0 4px #b44cff); }
 }
-.synapse-svg { animation: synapse-flow 3.6s ease-in-out infinite; }
+.synapse-svg { animation: synapse-flow 3s ease-in-out infinite; }
 
 @keyframes soma-breathe {
   0%, 100% { transform: scale(1); opacity: 0.88; }
@@ -279,7 +279,9 @@ html, body {
   0%, 24%, 100% { opacity: 0.78; filter: none; }
   7% { opacity: 1; filter: drop-shadow(0 0 3px #ffffff) brightness(1.8); }
 }
-.synapse-myelin { opacity: 0.78; animation: myelin-flare 2.8s linear infinite; }
+.synapse-myelin { opacity: 0.78; animation: myelin-flare 3s linear infinite; }
+/* Every synapse is always live: never paused by selection, recency, or offscreen culling. */
+.synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin { animation-play-state: running !important; }
 @media (prefers-reduced-motion: reduce) {
   .synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin { animation: none; }
   .synapse-ring { opacity: 0; }
