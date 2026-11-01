@@ -276,13 +276,23 @@ html, body {
   animation: soma-ring 3.6s ease-out infinite;
 }
 @keyframes myelin-flare {
-  0%, 24%, 100% { opacity: 0.78; filter: none; }
-  7% { opacity: 1; filter: drop-shadow(0 0 3px #ffffff) brightness(1.8); }
+  0%, 26%, 100% { opacity: 0.6; }
+  8% { opacity: 1; }
 }
-.synapse-myelin { opacity: 0.78; animation: myelin-flare 3s linear infinite; }
-/* Every synapse is always live: never paused by selection, recency, or offscreen culling. */
-.synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin { animation-play-state: running !important; }
-@media (prefers-reduced-motion: reduce) {
-  .synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin { animation: none; }
-  .synapse-ring { opacity: 0; }
+.synapse-myelin { opacity: 0.6; animation: myelin-flare 3s linear infinite; }
+/* Axon current: pure CSS stroke-dashoffset (animates on iOS Safari/WebKit; SMIL often freezes there). */
+@keyframes synapse-current {
+  0% { stroke-dashoffset: 22; opacity: 0; }
+  8% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { stroke-dashoffset: -100; opacity: 0; }
 }
+.synapse-current {
+  stroke-dasharray: 22 130;
+  stroke-dashoffset: 22;
+  animation: synapse-current 3s linear infinite;
+  will-change: stroke-dashoffset, opacity;
+}
+.synapse-current-halo { stroke-opacity: 0.55; }
+/* Every synapse is always live: never paused by selection, recency, reduced motion, or offscreen culling. */
+.synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin, .synapse-current { animation-play-state: running !important; }

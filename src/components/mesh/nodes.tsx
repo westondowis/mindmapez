@@ -220,7 +220,7 @@ function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
         // Seconds into the pulse when the current reaches this segment (it travels end -> soma).
         const reach = (0.1 + (0.75 * (e - (x + 5))) / Math.max(1, e - start)) * PULSE_SECONDS;
         return (
-          <g key={i} className="synapse-myelin" style={{ animationDelay: reduced ? undefined : `${reach.toFixed(2)}s` }}>
+          <g key={i} className="synapse-myelin" style={{ animationDelay: `${reach.toFixed(2)}s` }}>
             <rect x={x} y={30 - h / 2} width={SYNAPSE_PITCH - 3} height={h} rx="4" fill={`url(#sheath-${uid})`} stroke="#e2b8ff" strokeWidth="0.8" />
             <path d={`M${x + 2} ${30 - h / 2 + 2.6} H${x + SYNAPSE_PITCH - 5}`} stroke="#fff" strokeOpacity="0.55" strokeWidth="0.7" strokeLinecap="round" />
           </g>
@@ -241,6 +241,14 @@ function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
         <circle cx={e + 14} cy="48" r="1.8" />
       </g>
 
+      {/* CSS current (carries iOS WebKit, where SMIL is unreliable): dash segments sweep stroke-dashoffset
+          along the axon from the terminals to the soma. Always on for every memory, never gated. */}
+      <g fill="none" strokeLinecap="round">
+        <path className="synapse-current synapse-current-halo" d={currentPath} pathLength={100} stroke="#d46bff" strokeWidth="6" />
+        <path className="synapse-current synapse-current-core" d={currentPath} pathLength={100} stroke="#ffffff" strokeWidth="2.6" />
+      </g>
+
+      {/* SMIL comet: progressive enhancement only */}
       {/* current: a comet that runs from the parent end of the strand to the soma */}
       {reduced
         ? null
