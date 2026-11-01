@@ -240,7 +240,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   if (!open) {
     return (
-      <div className="pointer-events-auto absolute left-3 top-10 z-30">
+      <div className="pointer-events-auto absolute left-3 top-10 z-40">
         <button
           type="button"
           onClick={openVoice}
@@ -259,7 +259,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   const busy = phase === "thinking";
   return (
-    <div className="pointer-events-auto absolute left-3 top-10 z-30 w-[min(100%-1.5rem,18rem)] rounded-2xl border border-[#6a2ca8]/40 bg-black/80 p-3 text-white backdrop-blur-md">
+    <div className="pointer-events-auto absolute left-3 top-10 z-40 w-[min(100%-1.5rem,18rem)] rounded-2xl border border-[#6a2ca8]/40 bg-black/80 p-3 text-white backdrop-blur-md">
       <div className="flex items-center justify-between">
         <p className="text-xs uppercase tracking-[0.14em] text-[#c9b6ff]">Voice</p>
         <button type="button" onClick={closeVoice} className="text-white/60" aria-label="Close">✕</button>
