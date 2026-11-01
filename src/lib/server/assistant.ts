@@ -3,7 +3,7 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 import { newId } from "@/lib/utils";
 import { scoreText } from "@/lib/organize";
-import { grokChat } from "./ai";
+import { grokChat, synthesizeSpeech } from "./ai";
 import { ensureUserSettings } from "./seed";
 import type { AssistantMessage } from "@/lib/types";
 import { extractKeywords, parseIntent, verbosityHint } from "@/lib/voice";
@@ -183,4 +183,17 @@ export const voiceIngest = createServerFn({ method: "POST" })
       suggested: best ? { id: best.id, name: best.name, sectorId: best.sector_id } : null,
       branches: concepts.slice(0, 12).map((c) => c.name),
     };
+  });
+
+export const speakText = createServerFn({ method: "POST" })
+  .validator((input: { text: string; voice?: "male" | "female" }) => ({
+    text: String(input?.text ?? ""),
+    voice: input?.voice === "male" ? ("male" as const) : ("female" as const),
+  }))
+  .middleware([authMiddleware])
+  .handler(async ({ data }) => {
+    const r = await synthesizeSpeech(data.text, data.voice);
+    return r.ok
+      ? { ok: true as const, dataUrl: r.dataUrl, error: undefined }
+      : { ok: false as const, dataUrl: undefined, error: r.error };
   });

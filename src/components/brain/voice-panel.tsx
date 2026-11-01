@@ -18,7 +18,7 @@ declare global {
     webkitSpeechRecognition?: new () => SpeechRecognition;
   }
 }
-import { askAssistant, voiceIngest } from "@/lib/server/assistant";
+import { askAssistant, speakText, voiceIngest } from "@/lib/server/assistant";
 import { queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import {
   SPEAK_START_TIMEOUT_MS,
@@ -145,6 +145,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     // iOS: a play() inside the tap unlocks later programmatic audio. Rejection is harmless.
     try {
       const a = (silentAudio.current ??= new Audio(SILENT_WAV));
+      if (a.src !== SILENT_WAV) a.src = SILENT_WAV;
       a.muted = true;
       a.setAttribute("playsinline", "");
       const p = a.play();
@@ -237,6 +238,22 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     onSpeaking(on);
     syncPhase();
   }
+  /** Kill a recognition instance for good: detach every handler, abort, never reuse it (iOS won't restart an ended one). */
+  function disposeRecognition() {
+    if (restartTimer.current) window.clearTimeout(restartTimer.current);
+    restartTimer.current = null;
+    const rec = recRef.current;
+    recRef.current = null;
+    isStartingRef.current = false;
+    if (!rec) return;
+    rec.onresult = null;
+    rec.onend = null;
+    rec.onerror = null;
+    rec.onstart = null;
+    try { (rec as SpeechRecognition & { abort?: () => void }).abort?.(); } catch { /* already ended */ }
+    try { rec.stop(); } catch { /* already ended */ }
+  }
+
   function stopRecognition() {
     if (restartTimer.current) window.clearTimeout(restartTimer.current);
     restartTimer.current = null;
@@ -245,12 +262,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   /** Fully release SpeechRecognition before TTS so iOS leaves play-and-record (telephony) mode and routes to A2DP/Bluetooth. */
   function releaseRecognitionForPlayback() {
-    if (restartTimer.current) window.clearTimeout(restartTimer.current);
-    restartTimer.current = null;
-    const rec = recRef.current;
-    recRef.current = null; // detach so onend cannot schedule a restart mid-speech
-    isStartingRef.current = false;
-    try { (rec as (SpeechRecognition & { abort?: () => void }) | null)?.abort?.() ?? rec?.stop(); } catch { try { rec?.stop(); } catch { /* already stopped */ } }
+    disposeRecognition();
     // Recognition-only (iOS) path holds no GUM stream; if any track exists there, mute it (never stop/re-request).
     // Mute (never stop) mic tracks on every platform so the OS leaves telephony mode; restored in finishTurn.
     streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
@@ -358,6 +370,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     speakToken.current++;
     window.speechSynthesis?.pause();
     window.speechSynthesis?.cancel();
+    silentAudio.current?.pause();
     bargedIn.current = true;
     onUserSpeech();
     busyRef.current = false;
@@ -369,12 +382,17 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
 
   /** End of a turn: clear busy, and in continuous mode go back to Listening. */
   function finishTurn() {
+    disposeRecognition();
+    manualStopRef.current = null;
     streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = true; });
     if (openRef.current) setAudioSession("play-and-record");
     busyRef.current = false;
     setBusy(false);
     setHearing(false);
-    if (continuousRef.current && openRef.current) window.setTimeout(() => restartRef.current(), 300);
+    if (continuousRef.current && openRef.current) {
+      // Programmatic restart (outside a gesture). listen() falls back to idle if WebKit rejects it.
+      window.setTimeout(() => restartRef.current(), 300);
+    }
   }
 
   useEffect(() => {
@@ -392,32 +410,84 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /** Play a server-TTS data URL through an HTMLAudioElement primed on the tap. Resolves true if it played to the end. */
+  function playAudioUrl(url: string, token: number, onStart: () => void): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const end = (ok: boolean) => { if (!settled) { settled = true; resolve(ok); } };
+      try {
+        const a = (silentAudio.current ??= new Audio());
+        a.pause();
+        a.muted = false;
+        a.volume = 1;
+        a.setAttribute("playsinline", "");
+        (a as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+        a.onended = () => end(true);
+        a.onerror = () => { console.error("[voice] TTS audio element error", a.error); end(false); };
+        a.onplaying = () => { if (token === speakToken.current) onStart(); };
+        a.src = url;
+        const p = a.play();
+        if (p) p.catch((err) => { console.error("[voice] TTS audio.play() rejected", err); end(false); });
+        // Safety: never hang in Speaking if the element stalls.
+        window.setTimeout(() => { if (a.paused && !a.ended && a.currentTime === 0) { console.error("[voice] TTS audio never started"); end(false); } }, 8000);
+      } catch (err) {
+        console.error("[voice] TTS audio playback failed", err);
+        end(false);
+      }
+    });
+  }
+
   function speak(text: string, onDone?: () => void, onStart?: () => void) {
-    if (!window.speechSynthesis || !speechChunks(text).length) {
+    if (!text.trim()) {
       finishTurn();
       onDone?.();
       return;
     }
     const token = ++speakToken.current;
-    const synth = window.speechSynthesis;
-    synth.cancel();
-    if (synth.paused) synth.resume();
-    // Release the mic BEFORE playback: SR stopped + recRef cleared. Desktop keeps its single GUM stream for barge-in energy.
+    window.speechSynthesis?.cancel();
+    // Release the mic BEFORE playback so iOS leaves capture mode and routes to speaker/Bluetooth.
     releaseRecognitionForPlayback();
+    setAudioSession("playback");
     hearingRef.current = false;
     setSpeaking(true);
+    let finished = false;
     const done = () => {
-      if (token !== speakToken.current) return;
+      if (finished || token !== speakToken.current) return;
+      finished = true;
       setSpeaking(false);
       finishTurn();
       onDone?.();
     };
+    const started = () => { setSpeaking(true); onStart?.(); };
+    void (async () => {
+      try {
+        const res = await speakText({ data: { text, voice: voiceRef.current } });
+        if (token !== speakToken.current) return;
+        if (res.ok && res.dataUrl) {
+          const ok = await playAudioUrl(res.dataUrl, token, started);
+          if (token !== speakToken.current) return;
+          if (ok) return done();
+        } else {
+          console.error("[voice] server TTS failed", res.error);
+        }
+      } catch (err) {
+        console.error("[voice] server TTS request failed", err);
+      }
+      if (token !== speakToken.current) return;
+      // Last resort only: speechSynthesis (often silent on iOS). Watchdog guarantees no hang.
+      speakWithSynth(text, token, started, done);
+    })();
+  }
+
+  function speakWithSynth(text: string, token: number, onStart: () => void, done: () => void) {
+    const synth = window.speechSynthesis;
     const chunks = speechChunks(text);
+    if (!synth || !chunks.length) return done();
     let started = false;
     withVoice((v) => {
       if (token !== speakToken.current) return;
-      if (!v) console.error("[voice] no SpeechSynthesis voice available; using default");
       synth.cancel();
+      if (synth.paused) synth.resume();
       chunks.forEach((chunk, i) => {
         const u = new SpeechSynthesisUtterance(chunk);
         if (v) {
@@ -425,13 +495,10 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           u.lang = v.lang;
         }
         u.volume = 1;
-        u.rate = 1;
         u.pitch = voiceRef.current === "male" ? 0.92 : 1;
         if (i === 0) u.onstart = () => {
           started = true;
-          if (token !== speakToken.current) return;
-          setSpeaking(true);
-          onStart?.();
+          if (token === speakToken.current) onStart();
         };
         if (i === chunks.length - 1) u.onend = done;
         u.onerror = (e) => {
@@ -445,10 +512,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           done();
         }
       });
-      // Silent-synth watchdog: WebKit sometimes accepts speak() but never plays. Don't hang in Speaking.
       window.setTimeout(() => {
         if (started || token !== speakToken.current) return;
-        console.error("[voice] speechSynthesis produced no onstart within 1.5s; ending turn (no server TTS fallback configured)");
+        console.error("[voice] speechSynthesis produced no onstart; ending turn");
         synth.cancel();
         done();
       }, SPEAK_START_TIMEOUT_MS);
@@ -556,7 +622,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       setReply("Voice input is not available in this browser.");
       return;
     }
-    try { recRef.current?.stop(); } catch { /* already stopped */ }
+    // Never reuse an ended recognition: tear the old one down completely and build a fresh instance.
+    disposeRecognition();
     handled.current = false;
     const rec = new SR();
     rec.lang = "en-US";
@@ -634,6 +701,10 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
         wantListenRef.current = false;
         setReply("Microphone access was blocked. Allow it in Settings and tap again.");
+        if (recRef.current === rec) disposeRecognition();
+        hearingRef.current = false;
+        setHearing(false);
+        return;
       }
       if (!handled.current) {
         busyRef.current = false;
@@ -656,21 +727,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         return;
       }
       if (!handled.current && buffer.text.trim()) {
-        // The browser ended the session mid-thought (a brief pause). Don't dispatch yet:
-        // keep the pending 2 s silence timer and resume listening with the text carried over.
-        buffer.base = buffer.text;
-        if (!silence.current) silence.current = window.setTimeout(commit, VAD_SILENCE_MS);
-        // Never restart in a tight loop: wait >= STATE_DEBOUNCE_MS and re-check state.
-        scheduleRestart(() => {
-          if (handled.current) return;
-          isStartingRef.current = true;
-          try {
-            rec.start();
-          } catch {
-            isStartingRef.current = false;
-            commit();
-          }
-        });
+        // Session ended after real speech. Never call start() again on an ended instance: submit once.
+        void scheduleRestart;
+        commit();
         return;
       }
       if (silence.current) window.clearTimeout(silence.current);
@@ -690,7 +749,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
       hearingRef.current = true;
       syncPhase(true);
     } catch (err) {
+      // Blocked (e.g. programmatic continuous restart outside a gesture): go idle, require a tap.
       console.error("[voice] recognition start failed", err);
+      if (recRef.current === rec) disposeRecognition();
+      wantListenRef.current = false;
+      hearingRef.current = false;
       setHearing(false);
     } finally {
       // Release the lock after the start call settles (onend/onerror also clear it).
@@ -735,7 +798,8 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     setSpeaking(false);
     setHearing(false);
     window.speechSynthesis?.cancel();
-    try { recRef.current?.stop(); } catch { /* already stopped */ }
+    silentAudio.current?.pause();
+    disposeRecognition();
     if (draft.current.length) void flushDraft().catch((e) => console.error("[voice]", e));
   }
 
