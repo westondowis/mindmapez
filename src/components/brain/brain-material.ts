@@ -3,7 +3,7 @@ import * as THREE from "three";
 /** Shown in the corner of the brain view so you can tell which build is live. */
 // NOTE: Increment this semantic patch version (e.g., v5.19 -> v5.20) on every single feature commit or bug fix.
 // v5.20: memory synapse current is CSS stroke-dashoffset (iOS WebKit froze the SMIL-only comet); synapse animations ignore reduced-motion.
-export const BRAIN_BUILD = "v5.20";
+export const BRAIN_BUILD = "v5.21";
 
 /** Resting vs hovered sector lightning: pulse = flicker speed multiplier, amp = brightness. */
 export const HOT_REST = { pulse: 1, amp: 1 } as const;

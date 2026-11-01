@@ -51,3 +51,11 @@ export function synapseLayout(chars = 0): SynapseLayout {
   const axonEnd = SYNAPSE_LEAD + beads * SYNAPSE_PITCH;
   return { beads, axonEnd, width: axonEnd + SYNAPSE_TAIL, length: beads * SYNAPSE_PITCH };
 }
+
+/**
+ * Characters of information a memory holds, used to size its synapse.
+ * Counts title + body + transcript so every graph view measures the same way.
+ */
+export function memoryContentLength(m: { title?: string | null; body?: string | null; transcript?: string | null }): number {
+  return (m.title?.length ?? 0) + (m.body?.length ?? 0) + (m.transcript?.length ?? 0);
+}

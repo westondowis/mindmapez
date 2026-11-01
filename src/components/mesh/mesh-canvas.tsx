@@ -49,7 +49,7 @@ import {
 import { createMemory, savePositions } from "@/lib/server/memories";
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { synapseLayout } from "@/lib/synapse";
+import { memoryContentLength, synapseLayout } from "@/lib/synapse";
 import { nodeTypes } from "./nodes";
 
 const ME_ID = "me";
@@ -221,6 +221,7 @@ function toTourElements(
           dimmed,
           emoji: m.emoji,
           color: m.color,
+          contentLength: memoryContentLength(m),
           expanded: memory.openId === m.id,
           onEdit: () => memory.onEdit(m.id),
           onDismiss: memory.onDismiss,
@@ -429,7 +430,7 @@ function toBranchElements(
   const hub = nodes.find((n) => n.id === current.id)?.position ?? { x: 0, y: 0 };
   memories.forEach((m, i) => {
     const created = new Date(m.createdAt).getTime();
-    const chars = (m.body?.length ?? 0) + (m.transcript?.length ?? 0) + m.title.length;
+    const chars = memoryContentLength(m);
     const strand = synapseLayout(chars).width * 0.78;
     const gap = 36;
     const x = hub.x - strand / 2 - gap;
@@ -448,7 +449,7 @@ function toBranchElements(
         emoji: m.emoji,
         color: m.color,
         synapse: true,
-        contentLength: (m.body?.length ?? 0) + (m.transcript?.length ?? 0) + m.title.length,
+        contentLength: chars,
         expanded: memory.openId === m.id,
         onEdit: () => memory.onEdit(m.id),
         onDismiss: memory.onDismiss,
