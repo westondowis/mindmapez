@@ -47,6 +47,7 @@ import {
   updateBranch,
 } from "@/lib/server/branches";
 import { createMemory, savePositions } from "@/lib/server/memories";
+import { memoriesForBranch } from "@/lib/branch-memories";
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { memoryContentLength, synapseLayout } from "@/lib/synapse";
@@ -396,8 +397,12 @@ function toBranchElements(
   });
   const kids = childrenOf(graph.concepts, current.id);
   kids.forEach((k, i) => {
-    const pos =
-      k.positionX != null && k.positionY != null ? { x: k.positionX, y: k.positionY } : rowBelow(i, kids.length);
+    // Children sit in a row below their parent. A stored position that would overlap the
+    // parent's memory column (left of / level with the hub) falls back to the row, so a new
+    // sub-branch can never look like it owns the parent's memories.
+    const stored = k.positionX != null && k.positionY != null ? { x: k.positionX, y: k.positionY } : null;
+    const overlapsMemories = stored != null && stored.y < currentPos.y + 150 && stored.x < currentPos.x + 120;
+    const pos = stored && !overlapsMemories ? stored : rowBelow(i, kids.length, currentPos);
     nodes.push({
       id: k.id,
       type: "concept",
@@ -426,7 +431,7 @@ function toBranchElements(
       },
     });
   });
-  const memories = graph.memories.filter((m) => linkedTo(graph, m.id, current.id));
+  const memories = memoriesForBranch(graph.memories, graph.connections, current.id);
   const hub = nodes.find((n) => n.id === current.id)?.position ?? { x: 0, y: 0 };
   memories.forEach((m, i) => {
     const created = new Date(m.createdAt).getTime();
@@ -1203,7 +1208,7 @@ export function MeshCanvas({
         <RecordDock
           key={selectedConcept.id}
           pathLabel={recordPath || selectedConcept.name}
-          memories={graph.memories.filter((m) => linkedTo(graph, m.id, selectedConcept.id))}
+          memories={memoriesForBranch(graph.memories, graph.connections, selectedConcept.id)}
           pending={voiceMut.isPending}
           onOpenMemory={onSelectMemory}
           onSave={(input) => {
