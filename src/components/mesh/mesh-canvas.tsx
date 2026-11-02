@@ -47,7 +47,7 @@ import {
   updateBranch,
 } from "@/lib/server/branches";
 import { createMemory, savePositions } from "@/lib/server/memories";
-import { memoriesForBranch } from "@/lib/branch-memories";
+import { layoutAnchoredMemories, memoriesForBranch } from "@/lib/branch-memories";
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { memoryContentLength, synapseLayout } from "@/lib/synapse";
@@ -433,13 +433,17 @@ function toBranchElements(
   });
   const memories = memoriesForBranch(graph.memories, graph.connections, current.id);
   const hub = nodes.find((n) => n.id === current.id)?.position ?? { x: 0, y: 0 };
-  memories.forEach((m, i) => {
+  const placed = layoutAnchoredMemories(
+    memories.map((m) => ({ id: m.id, anchorId: current.id, contentLength: memoryContentLength(m) })),
+    new Map([[current.id, hub]]),
+    (c) => synapseLayout(c).width,
+  );
+  memories.forEach((m) => {
     const created = new Date(m.createdAt).getTime();
     const chars = memoryContentLength(m);
-    const strand = synapseLayout(chars).width * 0.78;
-    const gap = 36;
-    const x = hub.x - strand / 2 - gap;
-    const y = hub.y + (i - (memories.length - 1) / 2) * 110;
+    const spot = placed.get(m.id);
+    if (!spot) return;
+    const { x, y } = spot;
     nodes.push({
       id: m.id,
       type: "memory",
@@ -455,6 +459,7 @@ function toBranchElements(
         color: m.color,
         synapse: true,
         contentLength: chars,
+        anchorId: current.id,
         expanded: memory.openId === m.id,
         onEdit: () => memory.onEdit(m.id),
         onDismiss: memory.onDismiss,
@@ -587,7 +592,7 @@ export function MeshCanvas({
     const same = viewRef.current === viewKey;
     viewRef.current = viewKey;
     const local = new Map(nodesRef.current.map((n) => [n.id, n.position]));
-    setNodes(built.nodes.map((n) => ({ ...n, position: same ? (local.get(n.id) ?? n.position) : n.position })));
+    setNodes(built.nodes.map((n) => ({ ...n, position: same && n.type !== "memory" ? (local.get(n.id) ?? n.position) : n.position })));
     setEdges(built.edges);
   }, [built, viewKey, setEdges, setNodes]);
 
@@ -637,21 +642,20 @@ export function MeshCanvas({
   const onNodeDrag: OnNodeDrag = useCallback(
     (_e, node) => {
       if (node.type !== "concept") return;
+      // Only memories anchored to THIS branch follow it; every other memory stays on its own branch.
       setNodes((nds) => {
-        const mems = nds.filter((n) => n.type === "memory");
+        const mems = nds
+          .filter((n) => n.type === "memory")
+          .map((n) => {
+            const d = n.data as { anchorId?: string; contentLength?: number };
+            return { id: n.id, anchorId: d.anchorId ?? "", contentLength: d.contentLength ?? 40 };
+          })
+          .filter((m) => m.anchorId === node.id);
         if (!mems.length) return nds;
+        const placed = layoutAnchoredMemories(mems, new Map([[node.id, node.position]]), (c) => synapseLayout(c).width);
         return nds.map((n) => {
-          if (n.type !== "memory") return n;
-          const i = mems.findIndex((m) => m.id === n.id);
-          const chars = (n.data as { contentLength?: number }).contentLength ?? 40;
-          const strand = synapseLayout(chars).width * 0.78;
-          return {
-            ...n,
-            position: {
-              x: node.position.x - strand / 2 - 36,
-              y: node.position.y + (i - (mems.length - 1) / 2) * 110,
-            },
-          };
+          const p = placed.get(n.id);
+          return p ? { ...n, position: { x: p.x, y: p.y } } : n;
         });
       });
     },
@@ -672,7 +676,7 @@ export function MeshCanvas({
       // Memories tethered to a dragged branch moved with it; save those too.
       if (node.type === "concept") {
         for (const n of nodesRef.current) {
-          if (n.type === "memory") moved.push({ id: n.id, type: "memory", x: n.position.x, y: n.position.y });
+          if (n.type === "memory" && (n.data as { anchorId?: string }).anchorId === node.id) moved.push({ id: n.id, type: "memory", x: n.position.x, y: n.position.y });
         }
       }
       persist.mutate({ data: { nodes: moved } });
