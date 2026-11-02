@@ -4,7 +4,8 @@ import * as THREE from "three";
 // NOTE: Increment this semantic patch version (e.g., v5.19 -> v5.20) on every single feature commit or bug fix.
 // v5.20: memory synapse current is CSS stroke-dashoffset (iOS WebKit froze the SMIL-only comet); synapse animations ignore reduced-motion.
 // v5.22: memories are owned by stable branch id; creating a sub-branch never moves/re-renders memories under it.
-export const BRAIN_BUILD = "v5.22";
+// v5.23: memories anchor to their own branch id; tapping/dragging another branch no longer drags every memory onto it.
+export const BRAIN_BUILD = "v5.23";
 
 /** Resting vs hovered sector lightning: pulse = flicker speed multiplier, amp = brightness. */
 export const HOT_REST = { pulse: 1, amp: 1 } as const;
