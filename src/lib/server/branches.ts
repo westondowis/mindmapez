@@ -5,6 +5,7 @@ import { getSql } from "@/lib/db";
 import { newId } from "@/lib/utils";
 import { mapConcept, type ConceptRow } from "./map";
 import { ensureUserSettings } from "./seed";
+import { newBranchPosition } from "@/lib/branch-memories";
 
 async function loadUserConcepts(userId: string) {
   const sql = await getSql();
@@ -94,10 +95,10 @@ export const createBranch = createServerFn({ method: "POST" })
     const description = (data.description ?? "").trim();
 
     const siblings = concepts.filter((c) => (c.parentId ?? null) === parentId && (!parentId ? c.sectorId === sectorId : true));
-    const angle = (siblings.length / Math.max(siblings.length + 1, 1)) * Math.PI * 2 - Math.PI / 2;
-    const radius = parentId ? 180 : 260;
-    const posX = Math.cos(angle) * radius;
-    const posY = Math.sin(angle) * radius;
+    // Position relative to the parent (not the canvas origin) so the new branch never lands
+    // on top of the parent's memory synapses. Creating a branch never touches memory links.
+    const parentConcept = parentId ? concepts.find((c) => c.id === parentId) ?? null : null;
+    const { x: posX, y: posY } = newBranchPosition(parentConcept, siblings.length);
 
     try {
       await sql`

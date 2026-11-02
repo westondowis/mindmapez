@@ -181,16 +181,21 @@ export const createMemory = createServerFn({ method: "POST" })
             where id = ${data.conceptId} and user_id = ${context.userId}
           `
         : [];
-      const conceptsToLink =
+      // A pinned memory is linked by the branch's stable id, never re-resolved by name
+      // (name lookup could file it under a different, same-named branch).
+      const conceptsToLink: { id?: string; name: string; kind: string }[] =
         pinned[0]
-          ? [{ name: pinned[0].name, kind: pinned[0].kind as "category" }]
+          ? [{ id: pinned[0].id, name: pinned[0].name, kind: pinned[0].kind }]
           : organized.concepts;
 
       for (const concept of conceptsToLink) {
-        const existing = await sql<{ id: string }>`
-          select id from concepts where user_id = ${context.userId} and lower(name) = ${concept.name.toLowerCase()}
-        `;
-        let conceptId = existing[0]?.id;
+        let conceptId = concept.id;
+        if (!conceptId) {
+          const existing = await sql<{ id: string }>`
+            select id from concepts where user_id = ${context.userId} and lower(name) = ${concept.name.toLowerCase()}
+          `;
+          conceptId = existing[0]?.id;
+        }
         if (!conceptId) {
           conceptId = newId();
           const sectorId = assignSectorFromName(concept.name);
