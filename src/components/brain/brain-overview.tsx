@@ -5,6 +5,7 @@ import { VoicePanel } from "@/components/brain/voice-panel";
 import { Minus, Plus, RotateCcw } from "lucide-react";
 import {
   Component,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,6 +16,7 @@ import {
 import * as THREE from "three";
 import { primaryBranches, SECTOR_INSIGHT, sectorTitle, type BrainSector, type BrainSectorId } from "@/lib/brain";
 import type { Concept } from "@/lib/types";
+import { canvasNdc, owningSector, brainIntersections } from "@/lib/brain-picking";
 import { BRAIN_BUILD, createBrainMaterial } from "./brain-material";
 
 const MIN_DIST = 1.35;
@@ -193,6 +195,10 @@ function BrainModel({
 }) {
   const [hover, setHover] = useState<string | null>(null);
   const gltf = useGLTF("/brain.glb", "/draco/");
+  const pickRoot = useRef<THREE.Group>(null);
+  const { gl, camera } = useThree();
+  const pickCallbacks = useRef({ onPick, onHover });
+  pickCallbacks.current = { onPick, onHover };
   // Phones get tighter leader lines and smaller labels so nothing leaves the screen.
   const compact = useThree((s) => s.size.width) < 640;
 
@@ -269,6 +275,7 @@ function BrainModel({
       projected.project(camera);
       if (projected.z > 1) {
         el.style.opacity = "0";
+        el.style.pointerEvents = "none";
         continue;
       }
       slots.push({
@@ -308,6 +315,7 @@ function BrainModel({
       const k = t.el.dataset.hot === "1" ? 1.08 : 1;
       t.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${k})`;
       t.el.style.opacity = "1";
+      t.el.style.pointerEvents = "auto";
     }
   });
 
@@ -361,8 +369,8 @@ function BrainModel({
    * Which sector a click/hover on the brain belongs to: the lobe the touched piece
    * is tagged with, or — for connecting pieces like the insula — the closest pin.
    */
-  function sectorAt(hit: { object: THREE.Object3D; point: THREE.Vector3 }) {
-    const direct = REGION_SECTOR[regionOf(hit.object)];
+  const sectorAt = useCallback((hit: { object: THREE.Object3D; point: THREE.Vector3 }) => {
+    const direct = owningSector(hit.object);
     if (direct) return direct;
     // Hit points are in scene space; pins live in the lifted group's space.
     const local = hit.point.clone().sub(new THREE.Vector3(0, guide ? GUIDE_LIFT : BRAIN_LIFT, 0));
@@ -376,49 +384,70 @@ function BrainModel({
       }
     }
     return best?.sector.id as BrainSectorId | undefined;
-  }
+  }, [pins, guide]);
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let down: { x: number; y: number; dragged: boolean } | null = null;
+    function hitAt(event: MouseEvent) {
+      const ndc = canvasNdc(event, canvas.getBoundingClientRect());
+      if (!ndc || !pickRoot.current) return undefined;
+      pointer.set(ndc.x, ndc.y);
+      pickRoot.current.updateWorldMatrix(true, true);
+      raycaster.setFromCamera(pointer, camera);
+      // Recurse through GLTF lobe groups; decorative lines must not steal surface hits.
+      const hit = brainIntersections(raycaster, [pickRoot.current])[0];
+      return hit ? sectorAt(hit) : undefined;
+    }
+    function clear() {
+      setHover(null);
+      pickCallbacks.current.onHover?.(null);
+      canvas.style.cursor = "";
+    }
+    function move(event: PointerEvent) {
+      if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5) down.dragged = true;
+      const id = hitAt(event) ?? null;
+      setHover(id);
+      pickCallbacks.current.onHover?.(id);
+      canvas.style.cursor = id ? "pointer" : "";
+    }
+    function press(event: PointerEvent) {
+      down = event.button === 0 ? { x: event.clientX, y: event.clientY, dragged: false } : null;
+    }
+    function click(event: MouseEvent) {
+      const start = down;
+      down = null;
+      if (!start || start.dragged || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5) return;
+      const id = hitAt(event);
+      if (id) pickCallbacks.current.onPick(id);
+    }
+    function leave() { down = null; clear(); }
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerdown", press);
+    canvas.addEventListener("click", click);
+    canvas.addEventListener("pointerleave", leave);
+    canvas.addEventListener("pointercancel", leave);
+    return () => {
+      canvas.removeEventListener("pointermove", move);
+      canvas.removeEventListener("pointerdown", press);
+      canvas.removeEventListener("click", click);
+      canvas.removeEventListener("pointerleave", leave);
+      canvas.removeEventListener("pointercancel", leave);
+      canvas.style.cursor = "";
+    };
+  }, [gl, camera, sectorAt]);
 
   return (
     // Lifted a little so the tour card and hover panel don't cover the lower lobes.
-    <group position={[0, guide ? GUIDE_LIFT : BRAIN_LIFT, 0]}>
-      <primitive
-        object={fitted}
-        onClick={(e: { stopPropagation: () => void; object: THREE.Object3D; point: THREE.Vector3 }) => {
-          e.stopPropagation();
-          const id = sectorAt(e);
-          if (id) onPick(id);
-        }}
-        onPointerMove={(e: { object: THREE.Object3D; point: THREE.Vector3 }) => {
-          const id = sectorAt(e);
-          if (id) {
-            setHover(id);
-            onHover?.(id);
-          }
-        }}
-        onPointerOut={() => {
-          setHover(null);
-          onHover?.(null);
-        }}
-      />
+    <group ref={pickRoot} position={[0, guide ? GUIDE_LIFT : BRAIN_LIFT, 0]}>
+      <primitive object={fitted} />
       {pins.map(({ sector, pos, label }) => {
         const hot = hover === sector.id || spotlightId === sector.id;
         return (
           <group key={sector.id}>
-            <mesh
-              position={pos}
-              onClick={(e) => {
-                e.stopPropagation();
-                onPick(sector.id);
-              }}
-              onPointerOver={() => {
-                setHover(sector.id);
-                onHover?.(sector.id);
-              }}
-              onPointerOut={() => {
-                setHover(null);
-                onHover?.(null);
-              }}
-            >
+            <mesh position={pos} userData={{ sectorId: sector.id }}>
               <sphereGeometry args={[hot ? 0.034 : 0.022, 16, 16]} />
               <meshBasicMaterial color={hot ? "#f9c54b" : "#7df0ff"} toneMapped={false} />
             </mesh>
@@ -634,8 +663,8 @@ export function BrainOverview({
               onPointerEnter={() => setHovered(sector.id)}
               onPointerLeave={() => setHovered(null)}
               data-hot={hot ? "1" : "0"}
-              style={{ opacity: 0 }}
-              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-[box-shadow,background-color,border-color] duration-200 before:absolute before:-inset-3 before:content-[''] sm:px-2.5 sm:py-1 sm:text-[11px] ${
+              style={{ opacity: 0, pointerEvents: "none" }}
+              className={`pointer-events-auto absolute left-0 top-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm transition-[box-shadow,background-color,border-color] duration-200 sm:px-2.5 sm:py-1 sm:text-[11px] ${
                 hot
                   ? "z-20 border-2 border-cyan-200 bg-black/85 shadow-[0_0_24px_6px_rgba(34,211,238,0.8),0_0_8px_2px_rgba(250,204,21,0.6)]"
                   : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
@@ -651,19 +680,19 @@ export function BrainOverview({
       </div>
       <VoicePanel onSpeaking={setSpeaking} />
       {speaking ? <div className="pointer-events-none absolute inset-0 z-10 animate-pulse bg-[#6a2ca8]/15" /> : null}
-      <div className="pointer-events-auto absolute right-3 top-3 z-20 flex flex-row gap-2 md:right-5 md:top-1/2 md:-translate-y-1/2 md:flex-col">
-        <button type="button" className="brain-ctrl" aria-label="Zoom in" onClick={() => zoomBy(0.82)}>
+      <div className="pointer-events-none absolute right-3 top-3 z-20 flex flex-row gap-2 md:right-5 md:top-1/2 md:-translate-y-1/2 md:flex-col">
+        <button type="button" className="brain-ctrl pointer-events-auto" aria-label="Zoom in" onClick={() => zoomBy(0.82)}>
           <Plus className="size-4" />
         </button>
-        <button type="button" className="brain-ctrl" aria-label="Zoom out" onClick={() => zoomBy(1.18)}>
+        <button type="button" className="brain-ctrl pointer-events-auto" aria-label="Zoom out" onClick={() => zoomBy(1.18)}>
           <Minus className="size-4" />
         </button>
-        <button type="button" className="brain-ctrl" aria-label="Reset view" onClick={reset}>
+        <button type="button" className="brain-ctrl pointer-events-auto" aria-label="Reset view" onClick={reset}>
           <RotateCcw className="size-4" />
         </button>
       </div>
 
-      <div className="pointer-events-auto absolute inset-x-2 bottom-3 z-20 md:inset-x-auto md:left-1/2 md:w-[min(100%-2rem,30rem)] md:-translate-x-1/2">
+      <div className="pointer-events-none absolute inset-x-2 bottom-3 z-20 md:inset-x-auto md:left-1/2 md:w-[min(100%-2rem,30rem)] md:-translate-x-1/2">
         {hovered ? (
           <div className="mb-1.5 rounded-xl border border-[#6a2ca8]/40 bg-black/75 px-3 py-2 backdrop-blur-md">
             <p className="text-sm font-medium text-white">{sectors.find((x) => x.id === hovered)?.label}</p>
@@ -680,7 +709,7 @@ export function BrainOverview({
               type="button"
               onClick={() => pick(sector.id)}
               onPointerEnter={() => setHovered(sector.id)}
-              className={`shrink-0 rounded-full px-2.5 py-1.5 text-[11px] ${hovered === sector.id ? "bg-[#6a2ca8] text-white" : "bg-black/55 text-white/85"}`}
+              className={`pointer-events-auto shrink-0 rounded-full px-2.5 py-1.5 text-[11px] ${hovered === sector.id ? "bg-[#6a2ca8] text-white" : "bg-black/55 text-white/85"}`}
             >
               {(() => { const t = sectorTitle(sector); return t.renamed ? `${t.anatomy} ${t.emoji} ${t.short}` : `${t.anatomy} ${t.emoji}`; })()}
             </button>
