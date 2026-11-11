@@ -7,10 +7,17 @@ import { MemorySheet } from "@/components/mesh/memory-sheet";
 import { Walkthrough } from "@/components/onboarding/walkthrough";
 import { RequireAuth } from "@/components/require-auth";
 import { Button } from "@/components/ui/button";
+import type { SearchTarget } from "@/lib/graph-search";
 import type { BrainSectorId } from "@/lib/brain";
 import { getGraph } from "@/lib/server/memories";
 
-export const Route = createFileRoute("/")({ component: Home });
+export const Route = createFileRoute("/")({
+  component: Home,
+  validateSearch: (search: Record<string, unknown>): { focus?: string; focusType?: SearchTarget["type"] } => ({
+    focus: typeof search.focus === "string" ? search.focus : undefined,
+    focusType: search.focusType === "branch" || search.focusType === "memory" ? search.focusType : undefined,
+  }),
+});
 
 function Home() {
   return (
@@ -21,6 +28,7 @@ function Home() {
 }
 
 function MeshPage() {
+  const { focus, focusType } = Route.useSearch();
   const [openId, setOpenId] = useState<string | null>(null);
   const [guidePick, setGuidePick] = useState<string | null>(null);
   const q = useQuery({ queryKey: ["graph"], queryFn: () => getGraph() });
@@ -47,6 +55,7 @@ function MeshPage() {
           </div>
         ) : (
           <MeshCanvas
+            searchTarget={focus && focusType ? { id: focus, type: focusType } : undefined}
             graph={q.data}
             onSelectMemory={setOpenId}
             onDismissMemory={() => setOpenId(null)}

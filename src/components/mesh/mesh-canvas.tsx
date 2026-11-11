@@ -7,6 +7,9 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  useNodesInitialized,
+  useReactFlow,
+  useNodes,
   type Edge,
   type Node,
   type OnNodeDrag,
@@ -52,6 +55,9 @@ import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { memoryContentLength, synapseLayout } from "@/lib/synapse";
 import { nodeTypes } from "./nodes";
+import { GraphSearchDialog } from "./graph-search";
+import { reconcileGraphNodes } from "@/lib/graph-presentation";
+import { resolveSearchTarget, type SearchTarget } from "@/lib/graph-search";
 
 const ME_ID = "me";
 const SECTOR_HUB = "__sector__";
@@ -492,6 +498,20 @@ function toBranchElements(
   return { nodes, edges };
 }
 
+/** Wait for real node measurements before centering a deep-search destination. */
+function SearchFocus({ target }: { target: { id: string; request: number } | null }) {
+  const ready = useNodesInitialized();
+  const flow = useReactFlow();
+  const nodes = useNodes();
+  const done = useRef<number | null>(null);
+  useEffect(() => {
+    if (!target || !ready || done.current === target.request || !nodes.some(node => node.id === target.id)) return;
+    done.current = target.request;
+    void flow.fitView({ nodes: [{ id: target.id }], padding: 0.7, duration: 420, minZoom: 1, maxZoom: 1.6 });
+  }, [target, ready, flow, nodes]);
+  return null;
+}
+
 export function MeshCanvas({
   graph,
   onSelectMemory,
@@ -501,7 +521,9 @@ export function MeshCanvas({
   guide = false,
   spotlightId,
   onGuidePick,
+  searchTarget,
 }: {
+  searchTarget?: SearchTarget;
   graph: GraphPayload;
   onSelectMemory: (id: string) => void;
   /** Pane (empty canvas) click: close any memory detail/edit UI. */
@@ -534,6 +556,9 @@ export function MeshCanvas({
   const [tourFilter, setTourFilter] = useState<string | null>(forceFilter ?? null);
   const [tourFocus, setTourFocus] = useState<string | null>(null);
   const [openMemoryId, setOpenMemoryId] = useState<string | null>(null);
+  const [searchFocus, setSearchFocus] = useState<{ id: string; request: number } | null>(null);
+  const searchSequence = useRef(0);
+  const consumedTarget = useRef<string | null>(null);
   const [sortAsk, setSortAsk] = useState(false);
   const [mounted, setMounted] = useState(false);
   const onSelectRef = useRef(onSelectMemory);
@@ -591,10 +616,11 @@ export function MeshCanvas({
   useEffect(() => {
     const same = viewRef.current === viewKey;
     viewRef.current = viewKey;
-    const local = new Map(nodesRef.current.map((n) => [n.id, n.position]));
-    setNodes(built.nodes.map((n) => ({ ...n, position: same && n.type !== "memory" ? (local.get(n.id) ?? n.position) : n.position })));
+    setNodes(reconcileGraphNodes(built.nodes, nodesRef.current, same).map(node => ({
+      ...node, data: { ...node.data, focused: node.type === "memory" && node.id === searchFocus?.id },
+    })));
     setEdges(built.edges);
-  }, [built, viewKey, setEdges, setNodes]);
+  }, [built, viewKey, searchFocus, setEdges, setNodes]);
 
   const persist = useMutation({
     mutationFn: savePositions,
@@ -810,8 +836,34 @@ export function MeshCanvas({
       : "Select a sector first";
   const editingSector = editingSectorId ? sectorById(editingSectorId, sectors) : null;
 
+  const pickSearchResult = useCallback((target: SearchTarget) => {
+    const destination = resolveSearchTarget(graph, target);
+    if (!destination) {
+      toast.error("This result no longer has an owning branch.");
+      return;
+    }
+    setSectorId(destination.sectorId);
+    setBranchId(destination.branchId);
+    setSelectedId(destination.branchId);
+    setExpanded(current => new Set(current).add(destination.branchId));
+    setOpenMemoryId(destination.memoryId);
+    setComposing(false);
+    setEditing(null);
+    setEditingSectorId(null);
+    setSearchFocus({ id: destination.memoryId ?? destination.branchId, request: ++searchSequence.current });
+  }, [graph]);
+
+  useEffect(() => {
+    if (!searchTarget || touring || guide) return;
+    const key = `${searchTarget.type}:${searchTarget.id}`;
+    if (consumedTarget.current === key) return;
+    consumedTarget.current = key;
+    pickSearchResult(searchTarget);
+  }, [searchTarget?.id, searchTarget?.type, touring, guide, pickSearchResult]);
+
   useEffect(() => {
     function onHome() {
+      setSearchFocus(null);
       setSectorId(null);
       setBranchId(null);
       setSelectedId(null);
@@ -824,6 +876,7 @@ export function MeshCanvas({
   }, []);
 
   function goOverview() {
+    setSearchFocus(null);
     setSectorId(null);
     setBranchId(null);
     setSelectedId(null);
@@ -832,6 +885,7 @@ export function MeshCanvas({
     setEditingSectorId(null);
   }
   function goBack() {
+    setSearchFocus(null);
     if (composing) {
       setComposing(false);
       return;
@@ -858,6 +912,7 @@ export function MeshCanvas({
     if (sectorId) goOverview();
   }
   function onCrumb(crumb: Crumb) {
+    setSearchFocus(null);
     if (crumb.kind === "overview") goOverview();
     else if (crumb.kind === "sector") {
       setSectorId(crumb.id);
@@ -873,6 +928,7 @@ export function MeshCanvas({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.defaultPrevented || (e.target instanceof Element && e.target.closest('[role="dialog"]'))) return;
       if (e.key === "Escape") {
         goBack();
       }
@@ -893,6 +949,7 @@ export function MeshCanvas({
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          elevateNodesOnSelect={false}
           nodeOrigin={[0.5, 0.5]}
           nodeTypes={nodeTypes}
           onNodeClick={(_e, node) => {
@@ -931,7 +988,9 @@ export function MeshCanvas({
 
   return (
     <div className="relative flex h-full w-full flex-col">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30">
       <NavTrail
+        search={!guide ? <GraphSearchDialog graph={graph} onPick={pickSearchResult} /> : undefined}
         crumbs={crumbs}
         sectorId={sectorId}
         sectors={sectors}
@@ -942,7 +1001,7 @@ export function MeshCanvas({
       />
 
       {showFlow && !composing && !editing && !editingSector && !selectedConcept ? (
-        <div className="relative z-30 flex flex-col items-stretch gap-1.5 px-2 pb-1">
+        <div className="pointer-events-none relative z-30 flex flex-col items-stretch gap-1.5 px-2 pb-1 [&_button]:pointer-events-auto">
           {(() => {
             const sec = sectors.find((x) => x.id === sectorId);
             if (!sec) return null;
@@ -987,7 +1046,7 @@ export function MeshCanvas({
       ) : null}
 
       {showFlow && selectedConcept && !composing && !editing && !editingSector ? (
-        <div className="relative z-30 flex flex-wrap items-center justify-end gap-1.5 px-2 pb-1">
+        <div className="pointer-events-none relative z-30 flex flex-wrap items-center justify-end gap-1.5 px-2 pb-1 [&_button]:pointer-events-auto">
           <Button
             type="button"
             size="sm"
@@ -1011,7 +1070,9 @@ export function MeshCanvas({
       ) : null}
 
 
-      <div className="relative min-h-0 flex-1">
+      </div>
+      {/* Selection chrome floats above a fixed reserve; it never resizes the graph. */}
+      <div className={cn("relative min-h-0 flex-1", showFlow ? "mt-48 md:mt-36" : "mt-28")}>
       {!showFlow ? (
         <BrainOverview
           concepts={graph.concepts}
@@ -1020,6 +1081,7 @@ export function MeshCanvas({
           guide={guide}
           onGuidePick={onGuidePick}
           onOpenSector={(id: BrainSectorId) => {
+            setSearchFocus(null);
             setSectorId(id);
             setBranchId(null);
             setSelectedId(null);
@@ -1042,6 +1104,7 @@ export function MeshCanvas({
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          elevateNodesOnSelect={false}
           nodeOrigin={[0.5, 0.5]}
           nodeTypes={nodeTypes}
           onNodeClick={(_e, node) => {
@@ -1066,6 +1129,7 @@ export function MeshCanvas({
             setSelectedId(concept.id);
           }}
           onNodeDoubleClick={(_e, node) => {
+            setSearchFocus(null);
             if (node.id === DRAFT_ID || node.type === "memory") return;
             if (node.id === SECTOR_HUB) {
               setBranchId(null);
@@ -1090,10 +1154,6 @@ export function MeshCanvas({
           fitViewOptions={{ padding: 0.28, duration: 420 }}
           minZoom={0.45}
           maxZoom={2.2}
-          translateExtent={[
-            [-1400, -900],
-            [1400, 1600],
-          ]}
           zoomOnScroll
           zoomOnPinch
           zoomOnDoubleClick={false}
@@ -1106,6 +1166,7 @@ export function MeshCanvas({
           deleteKeyCode={null}
         >
           <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgb(136 187 216 / 18%)" />
+          <SearchFocus target={searchFocus} />
           <Controls showInteractive={false} position="bottom-left" />
           <MiniMap
             position="bottom-right"

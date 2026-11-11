@@ -1,5 +1,5 @@
-import { useMutation } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { MemoryCard } from "@/components/memory-card";
@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/page-header";
 import { RequireAuth } from "@/components/require-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { GraphSearchPanel } from "@/components/mesh/graph-search";
+import { getGraph } from "@/lib/server/memories";
 import { searchMemories } from "@/lib/server/search";
 
 export const Route = createFileRoute("/search")({ component: SearchRoute });
@@ -27,6 +29,8 @@ function SearchRoute() {
 }
 
 function SearchPage() {
+  const navigate = useNavigate();
+  const graph = useQuery({ queryKey: ["graph"], queryFn: () => getGraph() });
   const [query, setQuery] = useState("");
   const [semantic, setSemantic] = useState(true);
   const search = useMutation({ mutationFn: searchMemories });
@@ -41,9 +45,13 @@ function SearchPage() {
       <div className="mx-auto max-w-3xl">
         <PageHeader
           kicker="Retrieval"
-          title="Ask your mind"
-          description="Search by intent, not just keywords. The mesh understands what you meant."
+          title="Search your whole graph"
+          description="Find branches and memories at any depth. Filter by keywords and tags, then jump into the graph."
         />
+        {graph.isPending ? <p role="status" className="mb-6 text-sm text-muted-foreground">Loading your graph…</p> : graph.isError || !graph.data ? (
+          <div role="alert" className="mb-6"><p>Could not load graph search.</p><Button type="button" variant="outline" onClick={() => void graph.refetch()}>Try again</Button></div>
+        ) : <GraphSearchPanel graph={graph.data} onPick={target => void navigate({ to: "/", search: { focus: target.id, focusType: target.type } })} />}
+        <h2 className="mb-3 mt-8 font-display text-xl">Ask your mind · semantic search</h2>
         <form
           className="flex flex-col gap-2 sm:flex-row"
           onSubmit={(e) => {

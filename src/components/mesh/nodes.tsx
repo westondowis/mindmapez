@@ -41,6 +41,7 @@ export type MemoryNodeData = {
   expanded?: boolean;
   onEdit?: () => void;
   onDismiss?: () => void;
+  focused?: boolean;
 };
 
 export function MeNode({ data }: NodeProps) {
@@ -90,7 +91,7 @@ export function ConceptNode({ data }: NodeProps) {
   return (
     <div
       className={cn(
-        "relative flex w-28 flex-col items-center",
+        "relative flex h-[108px] w-28 flex-col items-center",
         d.dimmed && "opacity-25",
         d.isDraft && "opacity-80",
       )}
@@ -269,7 +270,8 @@ export function MemoryNode({ data }: NodeProps) {
     event.stopPropagation();
   };
   return (
-    <div className={cn("relative flex flex-col items-center", d.dimmed && "opacity-20", d.synapse && "synapse-node")}>
+    <div className={cn("relative flex h-[67px] flex-col items-center rounded-lg", d.dimmed && "opacity-20", d.synapse && "synapse-node", d.focused && "ring-2 ring-highlight ring-offset-4 ring-offset-background")}
+      style={{ width: Math.max(120, synapseLayout(d.contentLength).width * 0.78) }}>
       <Handle type="target" position={Position.Left} />
       <Handle type="source" position={Position.Right} />
       <div className={cn("relative", d.recent && "animate-node-pulse")}>
@@ -281,7 +283,7 @@ export function MemoryNode({ data }: NodeProps) {
         ) : null}
       </div>
       {d.expanded ? (
-        <div className="nodrag nopan mt-2 w-[min(72vw,240px)] rounded-xl border border-border bg-background/95 p-2.5 text-left shadow-soft">
+        <div className="nodrag nopan absolute left-1/2 top-full z-10 mt-2 w-[min(72vw,240px)] -translate-x-1/2 rounded-xl border border-border bg-background/95 p-2.5 text-left shadow-soft">
           <div className="flex items-start gap-1">
             <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">{d.title}</p>
             <button
@@ -310,9 +312,8 @@ export function MemoryNode({ data }: NodeProps) {
             </button>
           </div>
         </div>
-      ) : (
-        <p className="mt-1 max-w-[7.5rem] truncate text-center text-xs text-foreground/80">{d.title}</p>
-      )}
+      ) : null}
+      <p className="mt-1 max-w-[7.5rem] truncate text-center text-xs text-foreground/80">{d.title}</p>
     </div>
   );
 }
