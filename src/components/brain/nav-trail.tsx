@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ChevronRight, ChevronsUp, CornerUpLeft } from "lucide-react";
 import { sectorById, type BrainSector, type Crumb } from "@/lib/brain";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,9 @@ export function NavTrail({
   onCrumb,
   onBack,
   onOverview,
+  search,
 }: {
+  search?: ReactNode;
   crumbs: Crumb[];
   sectorId: string | null;
   sectors: BrainSector[];
@@ -24,6 +27,7 @@ export function NavTrail({
   return (
     <div className="pointer-events-none relative z-30 flex w-full flex-col items-center gap-1.5 px-2 pt-2 md:px-4 md:pt-3">
       <div className="pointer-events-auto flex w-full max-w-[min(100%,920px)] items-center gap-1 overflow-x-auto rounded-xl border border-border bg-background/75 p-1.5 backdrop-blur-md scrollbar-none">
+        {search}
         <Button
           type="button"
           size="sm"
@@ -68,7 +72,7 @@ export function NavTrail({
           ))}
         </nav>
       </div>
-      <div className="pointer-events-auto flex max-w-[min(100%,920px)] flex-wrap items-center justify-center gap-2 rounded-lg border border-border/80 bg-background/60 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur-md">
+      <div className="pointer-events-none flex max-w-[min(100%,920px)] flex-wrap items-center justify-center gap-2 rounded-lg border border-border/80 bg-background/60 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur-md">
         <span>
           Sector{" "}
           <span className="text-foreground">{sector ? sector.label : "—"}</span>
