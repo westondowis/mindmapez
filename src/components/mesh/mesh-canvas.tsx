@@ -56,6 +56,8 @@ import { cn } from "@/lib/utils";
 import { memoryContentLength, synapseLayout } from "@/lib/synapse";
 import { nodeTypes } from "./nodes";
 import { GraphSearchDialog } from "./graph-search";
+import { BranchDetailOverlay } from "./branch-detail-overlay";
+import { branchUpDestination, lockBranchViewport } from "./branch-viewport";
 import { reconcileGraphNodes } from "@/lib/graph-presentation";
 import { resolveSearchTarget, type SearchTarget } from "@/lib/graph-search";
 
@@ -286,6 +288,10 @@ function toBranchElements(
       position: { x: 0, y: 0 },
       data: { label: sector.label, kicker: sector.kicker, selected: true },
       draggable: false,
+    });
+    nodes.push({
+      id: "__move_up__", type: "concept", position: { x: 0, y: -200 }, draggable: false,
+      data: { name: "Brain Overview", emoji: "⬆️", count: 0, isMoveUp: true },
     });
     const primaries = childrenOf(graph.concepts, null, sectorId);
     primaries.forEach((c, i) => {
@@ -559,6 +565,7 @@ export function MeshCanvas({
   const [searchFocus, setSearchFocus] = useState<{ id: string; request: number } | null>(null);
   const searchSequence = useRef(0);
   const consumedTarget = useRef<string | null>(null);
+  const [detailBranchId, setDetailBranchId] = useState<string | null>(null);
   const [sortAsk, setSortAsk] = useState(false);
   const [mounted, setMounted] = useState(false);
   const onSelectRef = useRef(onSelectMemory);
@@ -566,6 +573,7 @@ export function MeshCanvas({
   const editMemory = useCallback((id: string) => onSelectRef.current(id), []);
   const dismissMemory = useCallback(() => setOpenMemoryId(null), []);
   useEffect(() => setMounted(true), []);
+  useEffect(() => lockBranchViewport(document), []);
   useEffect(() => {
     if (forceFilter !== undefined) setTourFilter(forceFilter);
   }, [forceFilter]);
@@ -827,6 +835,7 @@ export function MeshCanvas({
 
   const sectors = graph.sectors?.length ? graph.sectors : defaultSectors();
   const selectedConcept = graph.concepts.find((c) => c.id === selectedId) ?? null;
+  const detailBranch = graph.concepts.find(c => c.id === detailBranchId) ?? null;
   const currentBranch = branchId ? graph.concepts.find((c) => c.id === branchId) ?? null : selectedConcept;
   const crumbs = breadcrumbPath(graph.concepts, sectorId, branchId, sectors);
   const addLabel = selectedConcept
@@ -847,6 +856,7 @@ export function MeshCanvas({
     setSelectedId(destination.branchId);
     setExpanded(current => new Set(current).add(destination.branchId));
     setOpenMemoryId(destination.memoryId);
+    setDetailBranchId(destination.memoryId ? null : destination.branchId);
     setComposing(false);
     setEditing(null);
     setEditingSectorId(null);
@@ -864,6 +874,7 @@ export function MeshCanvas({
   useEffect(() => {
     function onHome() {
       setSearchFocus(null);
+      setDetailBranchId(null);
       setSectorId(null);
       setBranchId(null);
       setSelectedId(null);
@@ -877,6 +888,7 @@ export function MeshCanvas({
 
   function goOverview() {
     setSearchFocus(null);
+    setDetailBranchId(null);
     setSectorId(null);
     setBranchId(null);
     setSelectedId(null);
@@ -886,6 +898,7 @@ export function MeshCanvas({
   }
   function goBack() {
     setSearchFocus(null);
+    setDetailBranchId(null);
     if (composing) {
       setComposing(false);
       return;
@@ -913,6 +926,7 @@ export function MeshCanvas({
   }
   function onCrumb(crumb: Crumb) {
     setSearchFocus(null);
+    setDetailBranchId(null);
     if (crumb.kind === "overview") goOverview();
     else if (crumb.kind === "sector") {
       setSectorId(crumb.id);
@@ -949,6 +963,7 @@ export function MeshCanvas({
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          autoPanOnNodeFocus={false}
           elevateNodesOnSelect={false}
           nodeOrigin={[0.5, 0.5]}
           nodeTypes={nodeTypes}
@@ -959,6 +974,7 @@ export function MeshCanvas({
               return;
             }
             if (node.type === "memory") {
+              setDetailBranchId(null);
               setOpenMemoryId(node.id);
               return;
             }
@@ -987,7 +1003,7 @@ export function MeshCanvas({
     .join(" > ");
 
   return (
-    <div className="relative flex h-full w-full flex-col">
+    <div data-testid="branch-viewport" className="absolute inset-0 h-full w-full overflow-hidden overscroll-none">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30">
       <NavTrail
         search={!guide ? <GraphSearchDialog graph={graph} onPick={pickSearchResult} /> : undefined}
@@ -1044,35 +1060,9 @@ export function MeshCanvas({
           </p>
         </div>
       ) : null}
-
-      {showFlow && selectedConcept && !composing && !editing && !editingSector ? (
-        <div className="pointer-events-none relative z-30 flex flex-wrap items-center justify-end gap-1.5 px-2 pb-1 [&_button]:pointer-events-auto">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="min-h-11"
-            onClick={() => {
-              setActionError(null);
-              setComposing(true);
-            }}
-          >
-            <Plus className="size-4" />
-            Add sub-branch
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => setSortAsk(true)}>
-            Auto sort
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(selectedConcept)}>
-            Edit {selectedConcept.name}
-          </Button>
-        </div>
-      ) : null}
-
-
       </div>
-      {/* Selection chrome floats above a fixed reserve; it never resizes the graph. */}
-      <div className={cn("relative min-h-0 flex-1", showFlow ? "mt-48 md:mt-36" : "mt-28")}>
+      {/* Canvas bounds depend only on navigation level, never selection or floating card height. */}
+      <div data-testid="graph-canvas-frame" className={cn("absolute inset-x-0 bottom-0 overflow-hidden", showFlow ? "top-48 md:top-36" : "top-28")}>
       {!showFlow ? (
         <BrainOverview
           concepts={graph.concepts}
@@ -1104,32 +1094,39 @@ export function MeshCanvas({
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          autoPanOnNodeFocus={false}
           elevateNodesOnSelect={false}
           nodeOrigin={[0.5, 0.5]}
           nodeTypes={nodeTypes}
           onNodeClick={(_e, node) => {
             if (node.id === DRAFT_ID) return;
             if (node.id === "__move_up__") {
+              setDetailBranchId(null);
               const cur = branchId ? graph.concepts.find((c) => c.id === branchId) : null;
-              const up = cur?.parentId ?? null;
-              setBranchId(up);
-              setSelectedId(up);
+              const up = branchUpDestination(branchId, cur?.parentId ?? null);
+              if (up.overview) { goOverview(); return; }
+              setBranchId(up.branchId);
+              setSelectedId(up.branchId);
               return;
             }
             if (node.id === SECTOR_HUB) {
+              setDetailBranchId(null);
               setSelectedId(null);
               return;
             }
             if (node.type === "memory") {
+              setDetailBranchId(null);
               setOpenMemoryId(node.id);
               return;
             }
             const concept = graph.concepts.find((c) => c.id === node.id);
             if (!concept) return;
             setSelectedId(concept.id);
+            setDetailBranchId(concept.id);
           }}
           onNodeDoubleClick={(_e, node) => {
             setSearchFocus(null);
+            setDetailBranchId(null);
             if (node.id === DRAFT_ID || node.type === "memory") return;
             if (node.id === SECTOR_HUB) {
               setBranchId(null);
@@ -1144,6 +1141,7 @@ export function MeshCanvas({
             setExpanded((s) => new Set(s).add(concept.id));
           }}
           onPaneClick={() => {
+            setDetailBranchId(null);
             setOpenMemoryId(null);
             onDismissMemory?.();
             if (!composing) setSelectedId(branchId);
@@ -1183,6 +1181,30 @@ export function MeshCanvas({
         </ReactFlow>
       )}
       </div>
+
+      {showFlow && detailBranch && selectedConcept && !composing && !editing && !editingSector && !sortAsk ? (
+        <BranchDetailOverlay branch={detailBranch} onClose={() => setDetailBranchId(null)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="min-h-11"
+            onClick={() => {
+              setActionError(null);
+              setComposing(true);
+            }}
+          >
+            <Plus className="size-4" />
+            Add sub-branch
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="min-h-11" onClick={() => setSortAsk(true)}>
+            Auto sort
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(selectedConcept)}>
+            Edit {selectedConcept.name}
+          </Button>
+        </BranchDetailOverlay>
+      ) : null}
 
       {!showFlow && !touring ? (
         <button
@@ -1269,7 +1291,8 @@ export function MeshCanvas({
         />
       ) : null}
 
-      {showFlow && selectedConcept && !composing && !editing && !editingSector ? (
+      {showFlow && detailBranch && selectedConcept && !composing && !editing && !editingSector && !sortAsk ? (
+        <div className="pointer-events-none absolute inset-0 z-40 [&>*]:pointer-events-auto">
         <RecordDock
           key={selectedConcept.id}
           pathLabel={recordPath || selectedConcept.name}
@@ -1315,6 +1338,7 @@ export function MeshCanvas({
             });
           }}
         />
+        </div>
       ) : null}
       {sortAsk ? (
         <div className="absolute inset-0 z-40 grid place-items-end bg-background/55 p-4 md:place-items-center">

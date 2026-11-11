@@ -23,6 +23,7 @@ export function NavTrail({
   onBack: () => void;
   onOverview: () => void;
 }) {
+  const atSectorRoot = Boolean(sectorId) && !crumbs.some(crumb => crumb.kind === "branch");
   const sector = sectorId ? sectorById(sectorId, sectors) : null;
   return (
     <div className="pointer-events-none relative z-30 flex w-full flex-col items-center gap-1.5 px-2 pt-2 md:px-4 md:pt-3">
@@ -46,10 +47,11 @@ export function NavTrail({
           variant="ghost"
           className="min-h-9 shrink-0"
           onClick={onOverview}
+          aria-label={atSectorRoot ? "Up to Brain Overview" : "Brain Overview"}
           disabled={crumbs.length <= 1}
         >
           <ChevronsUp className="size-4" />
-          Brain Overview
+          {atSectorRoot ? "↑ Brain Overview" : "Brain Overview"}
         </Button>
         <div className="mx-1 h-5 w-px shrink-0 bg-border" />
         <nav aria-label="Location" className="flex min-w-0 items-center gap-0.5">

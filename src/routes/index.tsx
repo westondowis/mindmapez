@@ -36,7 +36,7 @@ function MeshPage() {
 
   return (
     <AppShell bleed locked={touring}>
-      <div className="relative h-dvh w-full overflow-hidden">
+      <div className={`fixed inset-0 h-dvh overflow-hidden overscroll-none ${touring ? "" : "md:left-16"}`}>
         {q.isError ? (
           <div className="grid h-full place-items-center px-6 text-center">
             <div>
