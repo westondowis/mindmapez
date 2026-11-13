@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ConnectorSummary } from "@/lib/connectors/admin";
+import { AppHub } from "@/components/connectors/app-hub";
 import {
   normalizeFlags,
   PERMISSION_LABELS,
@@ -40,14 +41,36 @@ function ConnectorsRoute() {
 }
 
 type Sector = { id: string; label: string; emoji: string };
-type DraftGrant = { key: string; scopeKind: ScopeKind; scopeRef: string | null; permissions: PermissionFlags };
+type DraftGrant = {
+  key: string;
+  scopeKind: ScopeKind;
+  scopeRef: string | null;
+  permissions: PermissionFlags;
+  allowedApps: string;
+  allowedDomains: string;
+};
+const splitList = (v: string) => v.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+const toGrantInput = ({ scopeKind, scopeRef, permissions, allowedApps, allowedDomains }: DraftGrant) => ({
+  scopeKind,
+  scopeRef,
+  permissions,
+  allowedApps: splitList(allowedApps),
+  allowedDomains: splitList(allowedDomains),
+});
 
 const NO_FLAGS: PermissionFlags = { read: false, search: false, write_review: false, write_direct: false, execute: false };
 let draftSeq = 0;
 const draftKey = () => `g${(draftSeq += 1)}`;
 
 function newDraft(): DraftGrant {
-  return { key: draftKey(), scopeKind: "branch", scopeRef: null, permissions: { ...NO_FLAGS, read: true, search: true } };
+  return {
+    key: draftKey(),
+    scopeKind: "branch",
+    scopeRef: null,
+    permissions: { ...NO_FLAGS, read: true, search: true },
+    allowedApps: "",
+    allowedDomains: "",
+  };
 }
 
 /** "Frontal lobe › Work-Life › Real-Estate" for a branch id. */
@@ -161,6 +184,7 @@ function ConnectorsPage() {
           )}
         </section>
 
+        <AppHub />
         <AuditLog connectors={connectors} />
       </div>
     </AppShell>
@@ -215,7 +239,7 @@ function CreateConnector({
       const res = await createConnector({
         data: {
           displayName: name,
-          grants: grants.map(({ scopeKind, scopeRef, permissions }) => ({ scopeKind, scopeRef, permissions })),
+          grants: grants.map(toGrantInput),
         },
       });
       if (!res.ok) throw new Error(res.error);
@@ -266,7 +290,7 @@ function ConnectorCard({
       const res = await saveConnectorGrants({
         data: {
           connectorId: connector.id,
-          grants: grants.map(({ scopeKind, scopeRef, permissions }) => ({ scopeKind, scopeRef, permissions })),
+          grants: grants.map(toGrantInput),
         },
       });
       if (!res.ok) throw new Error(res.error);
@@ -316,6 +340,8 @@ function ConnectorCard({
                     scopeKind: g.scopeKind,
                     scopeRef: g.scopeRef,
                     permissions: g.permissions,
+                    allowedApps: g.allowedApps.join(", "),
+                    allowedDomains: g.allowedDomains.join(", "),
                   })),
                 )
               }
@@ -409,6 +435,29 @@ function ScopeListEditor({
             onPick={(scopeKind, scopeRef) => update(g.key, { scopeKind, scopeRef })}
           />
           <PermissionToggles value={g.permissions} onChange={(permissions) => update(g.key, { permissions })} />
+          {g.permissions.execute ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <label className="text-xs text-muted-foreground">
+                Apps it may act in (Composio slugs, e.g. gmail, slack)
+                <Input
+                  className="mt-1"
+                  value={g.allowedApps}
+                  placeholder="gmail"
+                  onChange={(e) => update(g.key, { allowedApps: e.target.value })}
+                />
+              </label>
+              <label className="text-xs text-muted-foreground">
+                Websites for the browser bridge (e.g. facebook.com)
+                <Input
+                  className="mt-1"
+                  value={g.allowedDomains}
+                  placeholder="facebook.com"
+                  onChange={(e) => update(g.key, { allowedDomains: e.target.value })}
+                />
+              </label>
+              <p className="text-xs text-muted-foreground sm:col-span-2">Every action waits for your approval below.</p>
+            </div>
+          ) : null}
           <ScopePreview scopeKind={g.scopeKind} scopeRef={g.scopeRef} />
         </div>
       ))}
