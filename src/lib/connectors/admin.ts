@@ -6,7 +6,7 @@
 import { BRAIN_SECTORS } from "../brain.ts";
 import type { Sql, TxRunner } from "../sql-template.ts";
 import { generateConnectorToken, hashConnectorToken } from "./tokens.ts";
-import { normalizeFlags, type AuditStatus, type GrantInput, type PermissionFlags, type ScopeKind } from "./types.ts";
+import { cleanDomains, cleanSlugs, normalizeFlags, type AuditStatus, type GrantInput, type PermissionFlags, type ScopeKind } from "./types.ts";
 
 const newId = () => crypto.randomUUID();
 
@@ -17,6 +17,8 @@ export type ConnectorGrant = {
   /** Branch name or sector id, for display. */
   scopeLabel: string | null;
   permissions: PermissionFlags;
+  allowedApps: string[];
+  allowedDomains: string[];
   createdAt: string;
 };
 
@@ -85,10 +87,11 @@ async function insertGrants(sql: Sql, userId: string, connectorId: string, grant
     const f = normalizeFlags(g.permissions);
     await sql`
       insert into connector_grants (id, user_id, connector_id, scope_kind, sector_id, branch_id, scope_path,
-        can_read, can_search, can_write_review, can_write_direct, can_execute)
+        can_read, can_search, can_write_review, can_write_direct, can_execute, allowed_apps, allowed_domains)
       values (${newId()}, ${userId}, ${connectorId}, ${g.scopeKind},
         ${g.scopeKind === "sector" ? g.scopeRef : null}, ${g.scopeKind === "branch" ? g.scopeRef : null}, '/',
-        ${f.read}, ${f.search}, ${f.write_review}, ${f.write_direct}, ${f.execute})
+        ${f.read}, ${f.search}, ${f.write_review}, ${f.write_direct}, ${f.execute},
+        ${f.execute ? cleanSlugs(g.allowedApps) : []}::text[], ${f.execute ? cleanDomains(g.allowedDomains) : []}::text[])
     `;
   }
 }
@@ -195,10 +198,13 @@ export async function listConnectors(sql: Sql, userId: string): Promise<Connecto
     can_write_review: boolean;
     can_write_direct: boolean;
     can_execute: boolean;
+    allowed_apps: string[] | null;
+    allowed_domains: string[] | null;
     created_at: string;
   }>`
     select g.id, g.connector_id, g.scope_kind, g.sector_id, g.branch_id, c.name as branch_name,
-           g.can_read, g.can_search, g.can_write_review, g.can_write_direct, g.can_execute, g.created_at
+           g.can_read, g.can_search, g.can_write_review, g.can_write_direct, g.can_execute,
+           g.allowed_apps, g.allowed_domains, g.created_at
     from connector_grants g
     left join concepts c on c.id = g.branch_id and c.user_id = g.user_id
     where g.user_id = ${userId} and g.revoked_at is null
@@ -227,6 +233,8 @@ export async function listConnectors(sql: Sql, userId: string): Promise<Connecto
           write_direct: g.can_write_direct,
           execute: g.can_execute,
         },
+        allowedApps: g.allowed_apps ?? [],
+        allowedDomains: g.allowed_domains ?? [],
         createdAt: iso(g.created_at)!,
       })),
   }));

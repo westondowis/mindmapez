@@ -21,10 +21,11 @@ import {
   type ConnectorDeps,
   type ToolResult,
 } from "./service.ts";
+import { BROWSER_ACTIONS, getActionStatus, listExecutableTargets, proposeAction } from "./outbound.ts";
 import type { ConnectorPrincipal, Permission } from "./types.ts";
 
 export const MCP_SERVER_NAME = "mindmeld-brain";
-export const MCP_SERVER_VERSION = "5.27.0";
+export const MCP_SERVER_VERSION = "5.29.0";
 
 const INSTRUCTIONS =
   "MindMeld brain connector. You can only see the branches and memories the owner granted to this " +
@@ -156,6 +157,87 @@ export function buildConnectorServer(deps: ConnectorDeps, who: ConnectorPrincipa
             mode: args.mode,
           }),
         ),
+    );
+  }
+
+  if (perms.has("execute")) {
+    server.registerTool(
+      "list_apps",
+      {
+        title: "List apps and sites this connection may act on",
+        description:
+          "Apps (Composio toolkit slugs, e.g. gmail) and website domains the owner allowed for actions. Every action waits for the owner's approval.",
+        inputSchema: z.object({}).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async () => toToolResult({ ok: true, data: await listExecutableTargets(deps, who) }),
+    );
+    server.registerTool(
+      "propose_action",
+      {
+        title: "Propose an app or browser action",
+        description:
+          "Queue an action for the owner to approve. kind=app runs a Composio tool (e.g. app gmail, action GMAIL_SEND_EMAIL) " +
+          "once approved; kind=browser asks the owner's MindMeld Bridge extension to act on an allowed https site. " +
+          "context_memory_ids must be memories inside this connection's scope. Nothing runs before approval.",
+        inputSchema: z
+          .object({
+            kind: z.enum(["app", "browser"]),
+            summary: z.string().min(1).max(500),
+            app: z.string().min(1).max(64).optional(),
+            action: z.string().min(1).max(120).optional(),
+            arguments: z.record(z.string(), z.unknown()).optional(),
+            url: z.string().url().max(2000).optional(),
+            browser_action: z.enum(BROWSER_ACTIONS).optional(),
+            selector: z.string().max(500).optional(),
+            text: z.string().max(5000).optional(),
+            context_memory_ids: z.array(id).max(50).optional(),
+          })
+          .strict(),
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      },
+      async (args) => {
+        if (args.kind === "app" && (!args.app || !args.action)) {
+          return toToolResult({ ok: false, error: "invalid_arguments", message: "app and action are required" });
+        }
+        if (args.kind === "browser" && (!args.url || !args.browser_action)) {
+          return toToolResult({ ok: false, error: "invalid_arguments", message: "url and browser_action are required" });
+        }
+        return toToolResult(
+          await proposeAction(
+            deps,
+            who,
+            args.kind === "app"
+              ? {
+                  kind: "app",
+                  app: args.app!,
+                  action: args.action!,
+                  arguments: args.arguments ?? {},
+                  contextMemoryIds: args.context_memory_ids,
+                  summary: args.summary,
+                }
+              : {
+                  kind: "browser",
+                  url: args.url!,
+                  browserAction: args.browser_action!,
+                  selector: args.selector,
+                  text: args.text,
+                  contextMemoryIds: args.context_memory_ids,
+                  summary: args.summary,
+                },
+          ),
+        );
+      },
+    );
+    server.registerTool(
+      "get_action_status",
+      {
+        title: "Check a proposed action",
+        description: "Status (pending, approved, rejected, executed, failed) and result of an action this connection proposed.",
+        inputSchema: z.object({ action_id: id }).strict(),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async (args) => toToolResult(await getActionStatus(deps, who, args.action_id)),
     );
   }
 

@@ -10,6 +10,7 @@ import {
   saveGrants as saveGrantsCore,
   verifyAuditChain,
 } from "@/lib/connectors/admin";
+import { cleanDomains, cleanSlugs } from "@/lib/connectors/types";
 import type { AuditStatus, GrantInput, PermissionFlags, ScopeKind } from "@/lib/connectors/types";
 import { getSql, withTransaction } from "@/lib/db";
 
@@ -28,7 +29,13 @@ const AUDIT_STATUSES: AuditStatus[] = ["allowed", "denied", "boundary_violation"
 function cleanGrants(input: unknown): GrantInput[] {
   if (!Array.isArray(input)) return [];
   return input.slice(0, 32).map((g) => {
-    const row = (g ?? {}) as { scopeKind?: unknown; scopeRef?: unknown; permissions?: Partial<PermissionFlags> };
+    const row = (g ?? {}) as {
+      scopeKind?: unknown;
+      scopeRef?: unknown;
+      permissions?: Partial<PermissionFlags>;
+      allowedApps?: unknown;
+      allowedDomains?: unknown;
+    };
     const scopeKind = SCOPE_KINDS.includes(row.scopeKind as ScopeKind) ? (row.scopeKind as ScopeKind) : "branch";
     const p = row.permissions ?? {};
     return {
@@ -41,6 +48,8 @@ function cleanGrants(input: unknown): GrantInput[] {
         write_direct: p.write_direct === true,
         execute: p.execute === true,
       },
+      allowedApps: cleanSlugs(row.allowedApps),
+      allowedDomains: cleanDomains(row.allowedDomains),
     };
   });
 }
