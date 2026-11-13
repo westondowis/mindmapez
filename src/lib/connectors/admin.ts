@@ -41,7 +41,8 @@ export type AuditEntry = {
   targetBranchId: string | null;
   targetBranchName: string | null;
   status: AuditStatus;
-  detail: Record<string, unknown>;
+  /** Compact JSON of the row's detail (counts, reasons; never memory text). */
+  detail: string;
   createdAt: string;
   rowHash: string;
 };
@@ -270,7 +271,7 @@ export async function listAudit(
     targetBranchId: r.target_branch_id,
     targetBranchName: r.target_branch_name,
     status: r.status,
-    detail: typeof r.detail_json === "string" ? (JSON.parse(r.detail_json) as Record<string, unknown>) : r.detail_json,
+    detail: typeof r.detail_json === "string" ? r.detail_json : JSON.stringify(r.detail_json ?? {}),
     createdAt: iso(r.created_at)!,
     rowHash: r.row_hash,
   }));

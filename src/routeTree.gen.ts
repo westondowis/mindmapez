@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssistantRouteImport } from './routes/assistant'
 import { Route as CaptureRouteImport } from './routes/capture'
+import { Route as ConnectorsRouteImport } from './routes/connectors'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as McpRouteImport } from './routes/mcp'
@@ -36,6 +37,11 @@ const AssistantRoute = AssistantRouteImport.update({
 const CaptureRoute = CaptureRouteImport.update({
   id: '/capture',
   path: '/capture',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectorsRoute = ConnectorsRouteImport.update({
+  id: '/connectors',
+  path: '/connectors',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/assistant': typeof AssistantRoute
   '/capture': typeof CaptureRoute
+  '/connectors': typeof ConnectorsRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/assistant': typeof AssistantRoute
   '/capture': typeof CaptureRoute
+  '/connectors': typeof ConnectorsRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
@@ -124,6 +132,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/assistant': typeof AssistantRoute
   '/capture': typeof CaptureRoute
+  '/connectors': typeof ConnectorsRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/mcp': typeof McpRoute
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/'
     | '/assistant'
     | '/capture'
+    | '/connectors'
     | '/dashboard'
     | '/login'
     | '/mcp'
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/'
     | '/assistant'
     | '/capture'
+    | '/connectors'
     | '/dashboard'
     | '/login'
     | '/mcp'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/'
     | '/assistant'
     | '/capture'
+    | '/connectors'
     | '/dashboard'
     | '/login'
     | '/mcp'
@@ -187,6 +199,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AssistantRoute: typeof AssistantRoute
   CaptureRoute: typeof CaptureRoute
+  ConnectorsRoute: typeof ConnectorsRoute
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
   McpRoute: typeof McpRoute
@@ -220,6 +233,13 @@ declare module '@tanstack/react-router' {
       path: '/capture'
       fullPath: '/capture'
       preLoaderRoute: typeof CaptureRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connectors': {
+      id: '/connectors'
+      path: '/connectors'
+      fullPath: '/connectors'
+      preLoaderRoute: typeof ConnectorsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -299,6 +319,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssistantRoute: AssistantRoute,
   CaptureRoute: CaptureRoute,
+  ConnectorsRoute: ConnectorsRoute,
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
   McpRoute: McpRoute,
