@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "MindMeld Bridge",
+  "version": "0.1.0",
+  "description": "Runs browser actions you approved in MindMeld, only on the websites your connector allows.",
+  "permissions": ["storage", "alarms", "scripting", "tabs"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html" }
+}
