@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { assignSectorFromName, branchKindForDepth, descendantsOf, isSectorId, mergeSectors, overridesFromSectors, wouldCycle } from "@/lib/brain";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql } from "@/lib/db";
+import { getSql, withTransaction, type Sql } from "@/lib/db";
 import { newId } from "@/lib/utils";
 import { mapConcept, type ConceptRow } from "./map";
 import { ensureUserSettings } from "./seed";
@@ -26,8 +26,8 @@ async function loadOne(userId: string, id: string) {
   return rows[0] ? mapConcept(rows[0]) : null;
 }
 
-async function linkParent(userId: string, parentId: string | null, childId: string) {
-  const sql = await getSql();
+/** Re-point a branch's parent synapse. Takes the caller's `sql` so it joins its transaction. */
+async function linkParent(sql: Sql, userId: string, parentId: string | null, childId: string) {
   await sql`
     delete from connections
     where user_id = ${userId}
@@ -42,6 +42,13 @@ async function linkParent(userId: string, parentId: string | null, childId: stri
       ${newId()}, ${userId}, 'concept', ${parentId}, 'concept', ${childId}, 0.8, ${"branch"}, 'accepted'
     )
   `;
+}
+
+const CYCLE_MESSAGE = "A branch can’t be moved under itself or one of its children.";
+
+/** The concepts_path trigger raises check_violation (23514) for a move into the own subtree. */
+function isCycleError(err: unknown) {
+  return Boolean(err && typeof err === "object" && (err as { code?: string }).code === "23514");
 }
 
 export const createBranch = createServerFn({ method: "POST" })
@@ -101,17 +108,19 @@ export const createBranch = createServerFn({ method: "POST" })
     const { x: posX, y: posY } = newBranchPosition(parentConcept, siblings.length);
 
     try {
-      await sql`
-        insert into concepts (
-          id, user_id, name, kind, icon, emoji, color, description,
-          parent_id, sector_id, position_x, position_y, updated_at
-        ) values (
-          ${id}, ${context.userId}, ${name}, ${kind}, ${icon}, ${emoji}, ${color}, ${description},
-          ${parentId}, ${sectorId}, ${posX}, ${posY}, now()
-        )
-      `;
-      await linkParent(context.userId, parentId, id);
-      await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+      await withTransaction(async (tx) => {
+        await tx`
+          insert into concepts (
+            id, user_id, name, kind, icon, emoji, color, description,
+            parent_id, sector_id, position_x, position_y, updated_at
+          ) values (
+            ${id}, ${context.userId}, ${name}, ${kind}, ${icon}, ${emoji}, ${color}, ${description},
+            ${parentId}, ${sectorId}, ${posX}, ${posY}, now()
+          )
+        `;
+        await linkParent(tx, context.userId, parentId, id);
+        await tx`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+      });
       const created = await loadOne(context.userId, id);
       return { ok: true as const, branch: created };
     } catch (err) {
@@ -159,7 +168,7 @@ export const moveBranch = createServerFn({ method: "POST" })
     if (!branch) return { ok: false as const, error: "Branch not found." };
     const parentId = data.parentId === undefined ? branch.parentId : data.parentId;
     if (wouldCycle(concepts, data.id, parentId)) {
-      return { ok: false as const, error: "A branch can’t be moved under itself or one of its children." };
+      return { ok: false as const, error: CYCLE_MESSAGE };
     }
     let sectorId = data.sectorId ?? branch.sectorId;
     let depth = 0;
@@ -181,21 +190,30 @@ export const moveBranch = createServerFn({ method: "POST" })
       sectorId = assignSectorFromName(branch.name);
     }
     const kind = branchKindForDepth(depth);
-    const sql = await getSql();
-    await sql`
-      update concepts
-      set parent_id = ${parentId}, sector_id = ${sectorId}, kind = ${kind}, updated_at = now()
-      where id = ${data.id} and user_id = ${context.userId}
-    `;
     const down = descendantsOf(concepts, data.id);
-    for (const id of down) {
-      await sql`
-        update concepts set sector_id = ${sectorId}, updated_at = now()
-        where id = ${id} and user_id = ${context.userId}
-      `;
+    try {
+      // One transaction: the parent change, the subtree's sector and the path
+      // rewrite (done by the concepts_path triggers) land together or not at all.
+      // The trigger also rejects a cycle that slipped past the check above.
+      await withTransaction(async (tx) => {
+        await tx`
+          update concepts
+          set parent_id = ${parentId}, sector_id = ${sectorId}, kind = ${kind}, updated_at = now()
+          where id = ${data.id} and user_id = ${context.userId}
+        `;
+        for (const id of down) {
+          await tx`
+            update concepts set sector_id = ${sectorId}, updated_at = now()
+            where id = ${id} and user_id = ${context.userId}
+          `;
+        }
+        await linkParent(tx, context.userId, parentId, data.id);
+        await tx`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+      });
+    } catch (err) {
+      console.error("moveBranch failed", err);
+      return { ok: false as const, error: isCycleError(err) ? CYCLE_MESSAGE : "Could not move that branch." };
     }
-    await linkParent(context.userId, parentId, data.id);
-    await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
     return { ok: true as const };
   });
 
@@ -206,7 +224,6 @@ export const duplicateBranch = createServerFn({ method: "POST" })
     const concepts = await loadUserConcepts(context.userId);
     const branch = concepts.find((c) => c.id === data.id);
     if (!branch) return { ok: false as const, error: "Branch not found." };
-    const sql = await getSql();
     const include = Boolean(data.includeChildren);
     const idMap = new Map<string, string>();
     const queue = [branch.id];
@@ -218,30 +235,33 @@ export const duplicateBranch = createServerFn({ method: "POST" })
       }
     }
     try {
-      for (const oldId of queue) {
-        const src = concepts.find((c) => c.id === oldId);
-        if (!src) continue;
-        const newIdValue = idMap.get(oldId)!;
-        const parentId =
-          oldId === branch.id
-            ? src.parentId
-            : src.parentId
-              ? (idMap.get(src.parentId) ?? src.parentId)
-              : null;
-        const name = oldId === branch.id ? `${src.name} copy` : src.name;
-        await sql`
-          insert into concepts (
-            id, user_id, name, kind, icon, emoji, color, description,
-            parent_id, sector_id, position_x, position_y, updated_at
-          ) values (
-            ${newIdValue}, ${context.userId}, ${name}, ${src.kind}, ${src.icon}, ${src.emoji},
-            ${src.color}, ${src.description}, ${parentId}, ${src.sectorId},
-            ${(src.positionX ?? 0) + 36}, ${(src.positionY ?? 0) + 36}, now()
-          )
-        `;
-        await linkParent(context.userId, parentId, newIdValue);
-      }
-      await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+      // Copies branches only (memories stay bound to the original), in one transaction.
+      await withTransaction(async (sql) => {
+        for (const oldId of queue) {
+          const src = concepts.find((c) => c.id === oldId);
+          if (!src) continue;
+          const newIdValue = idMap.get(oldId)!;
+          const parentId =
+            oldId === branch.id
+              ? src.parentId
+              : src.parentId
+                ? (idMap.get(src.parentId) ?? src.parentId)
+                : null;
+          const name = oldId === branch.id ? `${src.name} copy` : src.name;
+          await sql`
+            insert into concepts (
+              id, user_id, name, kind, icon, emoji, color, description,
+              parent_id, sector_id, position_x, position_y, updated_at
+            ) values (
+              ${newIdValue}, ${context.userId}, ${name}, ${src.kind}, ${src.icon}, ${src.emoji},
+              ${src.color}, ${src.description}, ${parentId}, ${src.sectorId},
+              ${(src.positionX ?? 0) + 36}, ${(src.positionY ?? 0) + 36}, now()
+            )
+          `;
+          await linkParent(sql, context.userId, parentId, newIdValue);
+        }
+        await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+      });
       return { ok: true as const, id: idMap.get(branch.id)! };
     } catch (err) {
       console.error("duplicateBranch failed", err);
@@ -257,33 +277,34 @@ export const deleteBranch = createServerFn({ method: "POST" })
     const branch = concepts.find((c) => c.id === data.id);
     if (!branch) return { ok: false as const, error: "Branch not found." };
     const kids = concepts.filter((c) => c.parentId === data.id);
-    const sql = await getSql();
     const removeIds = [data.id];
-    if (data.mode === "cascade") {
-      removeIds.push(...descendantsOf(concepts, data.id));
-    } else {
-      for (const kid of kids) {
-        await sql`
-          update concepts
-          set parent_id = ${branch.parentId},
-              sector_id = ${branch.sectorId},
-              kind = ${branch.parentId ? kid.kind : "category"},
-              updated_at = now()
-          where id = ${kid.id} and user_id = ${context.userId}
-        `;
-        await linkParent(context.userId, branch.parentId, kid.id);
+    if (data.mode === "cascade") removeIds.push(...descendantsOf(concepts, data.id));
+    // One transaction so a failure can't leave half a subtree deleted.
+    await withTransaction(async (sql) => {
+      if (data.mode !== "cascade") {
+        for (const kid of kids) {
+          await sql`
+            update concepts
+            set parent_id = ${branch.parentId},
+                sector_id = ${branch.sectorId},
+                kind = ${branch.parentId ? kid.kind : "category"},
+                updated_at = now()
+            where id = ${kid.id} and user_id = ${context.userId}
+          `;
+          await linkParent(sql, context.userId, branch.parentId, kid.id);
+        }
       }
-    }
-    for (const id of removeIds) {
-      await sql`
-        delete from connections
-        where user_id = ${context.userId}
-          and ((source_type = 'concept' and source_id = ${id}) or (target_type = 'concept' and target_id = ${id}))
-      `;
-      await sql`delete from memory_concepts where user_id = ${context.userId} and concept_id = ${id}`;
-      await sql`delete from concepts where id = ${id} and user_id = ${context.userId}`;
-    }
-    await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+      for (const id of removeIds) {
+        await sql`
+          delete from connections
+          where user_id = ${context.userId}
+            and ((source_type = 'concept' and source_id = ${id}) or (target_type = 'concept' and target_id = ${id}))
+        `;
+        await sql`delete from memory_concepts where user_id = ${context.userId} and concept_id = ${id}`;
+        await sql`delete from concepts where id = ${id} and user_id = ${context.userId}`;
+      }
+      await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
+    });
     return { ok: true as const, removed: removeIds.length };
   });
 
