@@ -106,7 +106,15 @@ describe("MCP endpoint with the official SDK clients", () => {
     assert.equal(info?.name, "mindmeld-brain");
 
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((x) => x.name).sort(), ["ingest_memory", "list_authorized_tree", "read_branch", "search_brain"]);
+    assert.deepEqual(tools.tools.map((x) => x.name).sort(), [
+      "get_action_status",
+      "ingest_memory",
+      "list_apps",
+      "list_authorized_tree",
+      "propose_action",
+      "read_branch",
+      "search_brain",
+    ]);
     const schema = tools.tools.find((x) => x.name === "read_branch")!.inputSchema as { required?: string[]; additionalProperties?: boolean };
     assert.deepEqual(schema.required, ["branch_id"]);
     assert.equal(schema.additionalProperties, false);
@@ -161,7 +169,15 @@ describe("MCP endpoint with the official SDK clients", () => {
     assert.equal(client.getProtocolEra(), "modern");
     assert.equal(client.getNegotiatedProtocolVersion(), "2026-07-28");
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((x) => x.name).sort(), ["ingest_memory", "list_authorized_tree", "read_branch", "search_brain"]);
+    assert.deepEqual(tools.tools.map((x) => x.name).sort(), [
+      "get_action_status",
+      "ingest_memory",
+      "list_apps",
+      "list_authorized_tree",
+      "propose_action",
+      "read_branch",
+      "search_brain",
+    ]);
     const ok = text(await client.callTool({ name: "read_branch", arguments: { branch_id: seed.b.realEstate } }));
     assert.equal(ok.isError, false);
     assert.deepEqual((JSON.parse(ok.text) as { memories: { title: string }[] }).memories.map((m) => m.title), ["Cap rate notes"]);

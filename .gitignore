@@ -15,3 +15,7 @@ attachments
 .vercel
 .project_id
 .node_modules.lock
+
+# Local agent skills (never commit)
+.agents/
+skills-lock.json

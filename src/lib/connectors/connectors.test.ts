@@ -496,6 +496,7 @@ describe("migration 0010 on existing data", () => {
       assert.deepEqual(again, paths);
 
       // The rollback script removes everything 0010 added.
+      await db.pg.exec(migrationText("rollback/0011_app_hub.down.sql"));
       await db.pg.exec(migrationText("rollback/0010_connector_security.down.sql"));
       const cols = await db.sql<{ n: number }>`
         select count(*)::int as n from information_schema.columns
