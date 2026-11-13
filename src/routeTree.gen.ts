@@ -14,6 +14,7 @@ import { Route as AssistantRouteImport } from './routes/assistant'
 import { Route as CaptureRouteImport } from './routes/capture'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as ReflectRouteImport } from './routes/reflect'
 import { Route as ReviewRouteImport } from './routes/review'
 import { Route as SearchRouteImport } from './routes/search'
@@ -45,6 +46,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReflectRoute = ReflectRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/capture': typeof CaptureRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
+  '/mcp': typeof McpRoute
   '/reflect': typeof ReflectRoute
   '/review': typeof ReviewRoute
   '/search': typeof SearchRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/capture': typeof CaptureRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
+  '/mcp': typeof McpRoute
   '/reflect': typeof ReflectRoute
   '/review': typeof ReviewRoute
   '/search': typeof SearchRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/capture': typeof CaptureRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
+  '/mcp': typeof McpRoute
   '/reflect': typeof ReflectRoute
   '/review': typeof ReviewRoute
   '/search': typeof SearchRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/capture'
     | '/dashboard'
     | '/login'
+    | '/mcp'
     | '/reflect'
     | '/review'
     | '/search'
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/capture'
     | '/dashboard'
     | '/login'
+    | '/mcp'
     | '/reflect'
     | '/review'
     | '/search'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/capture'
     | '/dashboard'
     | '/login'
+    | '/mcp'
     | '/reflect'
     | '/review'
     | '/search'
@@ -177,6 +189,7 @@ export interface RootRouteChildren {
   CaptureRoute: typeof CaptureRoute
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
+  McpRoute: typeof McpRoute
   ReflectRoute: typeof ReflectRoute
   ReviewRoute: typeof ReviewRoute
   SearchRoute: typeof SearchRoute
@@ -221,6 +234,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reflect': {
@@ -281,6 +301,7 @@ const rootRouteChildren: RootRouteChildren = {
   CaptureRoute: CaptureRoute,
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
+  McpRoute: McpRoute,
   ReflectRoute: ReflectRoute,
   ReviewRoute: ReviewRoute,
   SearchRoute: SearchRoute,
