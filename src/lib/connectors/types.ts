@@ -16,7 +16,40 @@ export type GrantInput = {
   /** Sector id for `sector`, branch id for `branch`, ignored for `root`. */
   scopeRef: string | null;
   permissions: PermissionFlags;
+  /** Composio toolkit slugs `execute` may reach through this grant (e.g. "gmail"). */
+  allowedApps?: string[];
+  /** Hostnames the browser bridge may act on through this grant (e.g. "facebook.com"). */
+  allowedDomains?: string[];
 };
+
+/** Lowercase slugs, `[a-z0-9_]`, deduped, at most 64. */
+export function cleanSlugs(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out = new Set<string>();
+  for (const v of input) {
+    const slug = typeof v === "string" ? v.trim().toLowerCase() : "";
+    if (/^[a-z0-9_]{1,64}$/.test(slug)) out.add(slug);
+  }
+  return [...out].slice(0, 64);
+}
+
+/** Bare lowercase hostnames (no scheme, path or port), deduped, at most 64. */
+export function cleanDomains(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out = new Set<string>();
+  for (const v of input) {
+    let host = typeof v === "string" ? v.trim().toLowerCase() : "";
+    host = host.replace(/^[a-z]+:\/\//, "").replace(/[/:?#].*$/, "").replace(/^www\./, "");
+    if (/^(?=.{1,253}$)([a-z0-9-]{1,63}\.)+[a-z]{2,63}$/.test(host)) out.add(host);
+  }
+  return [...out].slice(0, 64);
+}
+
+/** True when `host` is `domain` or a subdomain of it. */
+export function hostMatches(host: string, domain: string) {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  return h === domain || h.endsWith(`.${domain}`);
+}
 
 /** The authenticated caller on the MCP endpoint. Never derived from cookies. */
 export type ConnectorPrincipal = {
@@ -31,7 +64,13 @@ export type AuditAction =
   | "auth"
   | "revoke"
   | "grant_change"
-  | "create";
+  | "create"
+  | "propose"
+  | "approve"
+  | "reject"
+  | "claim"
+  | "app_connect"
+  | "app_disconnect";
 
 export type AuditStatus = "allowed" | "denied" | "boundary_violation" | "error" | "pending_approval";
 

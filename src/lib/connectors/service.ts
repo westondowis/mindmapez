@@ -51,7 +51,7 @@ export type ToolError =
 
 export type ToolResult<T> = { ok: true; data: T } | ToolError;
 
-type AuditEvent = {
+export type AuditEvent = {
   action: AuditAction;
   status: AuditStatus;
   toolName?: string | null;
@@ -123,7 +123,7 @@ async function connectorRoleReady(tx: Sql) {
   return Boolean(rows[0]?.ok);
 }
 
-type Scoped = {
+export type Scoped = {
   /** The transaction's `sql`; reads here run under RLS when it is active. */
   tx: Sql;
   /** Leave the restricted role (for writes and audit). Idempotent. */
@@ -146,7 +146,7 @@ export async function recordAudit(sql: Sql, who: ConnectorPrincipal, e: AuditEve
   await writeAudit(sql, who, e);
 }
 
-async function runScoped<T>(
+export async function runScoped<T>(
   deps: ConnectorDeps,
   who: ConnectorPrincipal,
   toolName: string,
