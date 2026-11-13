@@ -14,6 +14,8 @@ type Row = {
   concept_name: string | null;
   suggested_name: string | null;
   created_at: string | Date;
+  connector_name: string | null;
+  suggested_title: string | null;
 };
 
 const parse = (s: string): string[] => {
@@ -59,9 +61,14 @@ export const listReviews = createServerFn({ method: "GET" })
   .handler(async ({ context }): Promise<ReviewItem[]> => {
     const sql = await getSql();
     const rows = await sql<Row>`
-      select id, raw, key_points_json, keywords_json, action, concept_id, concept_name, suggested_name, created_at
-      from pending_reviews where user_id = ${context.userId} and status = 'pending'
-      order by created_at asc limit 100
+      select r.id, r.raw, r.key_points_json, r.keywords_json, r.action, r.concept_id, r.concept_name,
+             r.suggested_name, r.created_at,
+             case when r.source_kind = 'connector' then coalesce(k.display_name, 'Connector') end as connector_name,
+             r.untrusted_payload_json ->> 'title' as suggested_title
+      from pending_reviews r
+      left join connectors k on k.id = r.connector_id and k.user_id = r.user_id
+      where r.user_id = ${context.userId} and r.status = 'pending'
+      order by r.created_at asc limit 100
     `;
     return rows.map((r) => ({
       id: r.id,
@@ -73,6 +80,8 @@ export const listReviews = createServerFn({ method: "GET" })
       conceptName: r.concept_name,
       suggestedName: r.suggested_name,
       createdAt: new Date(r.created_at).toISOString(),
+      connectorName: r.connector_name,
+      suggestedTitle: r.suggested_title,
     }));
   });
 

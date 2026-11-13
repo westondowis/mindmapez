@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { AccountSignOut } from "@/components/account-sign-out";
 import { DriveBackupCard } from "@/components/drive-backup-card";
@@ -131,6 +131,16 @@ function SettingsPage() {
           <div className="mt-4">
             <AccountSignOut />
           </div>
+        </section>
+        <section className="mt-4 rounded-xl border border-border bg-card p-5">
+          <h2 className="font-display text-xl">Connectors</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Let an AI agent or app (Gmail, a browser agent, Claude, Grok) read or add to one branch of your brain over
+            MCP. Each connector gets its own token, scope and activity log.
+          </p>
+          <Button asChild className="mt-4" variant="outline">
+            <Link to="/connectors">Manage connectors</Link>
+          </Button>
         </section>
         <DriveBackupCard />
         <section className="mt-4 rounded-xl border border-highlight/40 bg-card p-5">

@@ -10,6 +10,10 @@ export type ReviewItem = {
   conceptName: string | null;
   suggestedName: string | null;
   createdAt: string;
+  /** Set when an MCP connector queued this item; its text is untrusted input. */
+  connectorName?: string | null;
+  /** The title the connector proposed. */
+  suggestedTitle?: string | null;
 };
 
 /** Spoken cues meaning "I'm finished, store what I said". */

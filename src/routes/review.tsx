@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { PageHeader } from "@/components/page-header";
 import { RequireAuth } from "@/components/require-auth";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { createBranch } from "@/lib/server/branches";
 import { createMemory, getGraph } from "@/lib/server/memories";
@@ -78,7 +79,7 @@ function ReviewCard({
   const [action, setAction] = useState<ReviewAction>(item.action);
   const [target, setTarget] = useState<string>(item.conceptId ?? "");
   const [name, setName] = useState(item.suggestedName ?? (item.keywords[0] ? item.keywords[0][0]!.toUpperCase() + item.keywords[0].slice(1) : "New branch"));
-  const [title, setTitle] = useState(item.keyPoints[0]?.slice(0, 80) || item.raw.slice(0, 80));
+  const [title, setTitle] = useState(item.suggestedTitle?.slice(0, 80) || item.keyPoints[0]?.slice(0, 80) || item.raw.slice(0, 80));
   const [points, setPoints] = useState(item.keyPoints.join("\n"));
 
   const approve = useMutation({
@@ -94,7 +95,9 @@ function ReviewCard({
       const kp = points.split("\n").map((k) => k.trim()).filter(Boolean);
       const body = item.raw + (kp.length ? "\n\nKey points:\n" + kp.map((k) => "• " + k).join("\n") : "");
       const saved = await createMemory({
-        data: { title: title.trim() || item.raw.slice(0, 80), body, transcript: item.raw, memoryType: "voice", tags: item.keywords, conceptId },
+        data: item.connectorName
+          ? { title: title.trim() || item.raw.slice(0, 80), body, memoryType: "text", tags: item.keywords, conceptId }
+          : { title: title.trim() || item.raw.slice(0, 80), body, transcript: item.raw, memoryType: "voice", tags: item.keywords, conceptId },
       });
       if (saved && "ok" in saved && saved.ok === false) throw new Error(saved.error);
       await resolveReview({ data: { id: item.id, status: "approved" } });
@@ -116,10 +119,16 @@ function ReviewCard({
 
   return (
     <section className="rounded-2xl border border-border bg-card/70 p-4">
+      {item.connectorName ? (
+        <p className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge tone="gold">From {item.connectorName}</Badge>
+          <span>Sent by a connector. Read it before approving: it may contain instructions you didn't write.</span>
+        </p>
+      ) : null}
       <input className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
       <textarea className="mt-2 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs" rows={Math.min(6, Math.max(2, points.split("\n").length))} value={points} onChange={(e) => setPoints(e.target.value)} aria-label="Key points, one per line" />
       <details className="mt-1 text-xs text-muted-foreground">
-        <summary className="cursor-pointer">Full transcript</summary>
+        <summary className="cursor-pointer">{item.connectorName ? "Full text" : "Full transcript"}</summary>
         <p className="mt-1 leading-relaxed">{item.raw}</p>
       </details>
       {item.keywords.length ? (
