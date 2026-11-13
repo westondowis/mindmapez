@@ -357,6 +357,36 @@ for (const rls of [true, false]) {
       if (preview.ok) assert.ok(preview.branches >= 2 && preview.memories >= 2);
     });
 
+    test("the settings preview counts exactly what the connector can then read", async () => {
+      for (const scope of [
+        { scopeKind: "branch" as const, scopeRef: seed.b.realEstate },
+        { scopeKind: "sector" as const, scopeRef: "frontal" },
+        { scopeKind: "sector" as const, scopeRef: "temporal" },
+      ]) {
+        const preview = await previewScope(db.sql, user, scope);
+        assert.ok(preview.ok);
+        const created = await createConnector(db.transaction, user, {
+          displayName: `Preview ${scope.scopeRef}`,
+          grants: [{ ...scope, permissions: flags("read") }],
+        });
+        assert.ok(created.ok);
+        if (!created.ok || !preview.ok) return;
+        const who = await principal(db, created.token);
+        const tree = await listAuthorizedTree(deps, who, { maxDepth: 12 });
+        assert.ok(tree.ok);
+        if (!tree.ok) return;
+        assert.equal(tree.data.branches.length, preview.branches, `branches for ${scope.scopeRef}`);
+        assert.equal(
+          tree.data.branches.reduce((n, b) => n + b.memory_count, 0),
+          preview.memories,
+          `memories for ${scope.scopeRef}`,
+        );
+        await revokeConnector(db.transaction, user, who.connectorId);
+      }
+      const audit = await listAudit(db.sql, user, { status: "boundary_violation", limit: 5 });
+      for (const row of audit) assert.equal(typeof row.detail, "string");
+    });
+
     test("write_direct files a memory and a sub-branch inside the grant", async () => {
       const created = await createConnector(db.transaction, user, {
         displayName: "Direct writer",
