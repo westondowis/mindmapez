@@ -23,6 +23,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as MemoryIdRouteImport } from './routes/memory.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiBridgeActionsRouteImport } from './routes/api/bridge/actions'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -94,6 +95,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBridgeActionsRoute = ApiBridgeActionsRouteImport.update({
+  id: '/api/bridge/actions',
+  path: '/api/bridge/actions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/timeline': typeof TimelineRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/bridge/actions': typeof ApiBridgeActionsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/timeline': typeof TimelineRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/bridge/actions': typeof ApiBridgeActionsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/timeline': typeof TimelineRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/bridge/actions': typeof ApiBridgeActionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/timeline'
     | '/memory/$id'
     | '/api/auth/$'
+    | '/api/bridge/actions'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/timeline'
     | '/memory/$id'
     | '/api/auth/$'
+    | '/api/bridge/actions'
   id:
     | '__root__'
     | '/'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/timeline'
     | '/memory/$id'
     | '/api/auth/$'
+    | '/api/bridge/actions'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -210,6 +222,7 @@ export interface RootRouteChildren {
   TimelineRoute: typeof TimelineRoute
   MemoryIdRoute: typeof MemoryIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiBridgeActionsRoute: typeof ApiBridgeActionsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -312,6 +325,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/bridge/actions': {
+      id: '/api/bridge/actions'
+      path: '/api/bridge/actions'
+      fullPath: '/api/bridge/actions'
+      preLoaderRoute: typeof ApiBridgeActionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -330,6 +350,7 @@ const rootRouteChildren: RootRouteChildren = {
   TimelineRoute: TimelineRoute,
   MemoryIdRoute: MemoryIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiBridgeActionsRoute: ApiBridgeActionsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
