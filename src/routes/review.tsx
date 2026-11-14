@@ -7,9 +7,8 @@ import { PageHeader } from "@/components/page-header";
 import { RequireAuth } from "@/components/require-auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { createBranch } from "@/lib/server/branches";
-import { createMemory, getGraph } from "@/lib/server/memories";
-import { listReviews, resolveReview } from "@/lib/server/reviews";
+import { getGraph } from "@/lib/server/memories";
+import { approveReviewItem, listReviews, resolveReview } from "@/lib/server/reviews";
 import type { ReviewAction, ReviewItem } from "@/lib/voice";
 
 export const Route = createFileRoute("/review")({ component: ReviewRoute });
@@ -84,23 +83,12 @@ function ReviewCard({
 
   const approve = useMutation({
     mutationFn: async () => {
-      let conceptId: string | null = target || null;
-      if (action !== "memory") {
-        const made = await createBranch({
-          data: { name: name.trim(), parentId: action === "sub-branch" ? target || null : null },
-        });
-        if (!made.ok) throw new Error(made.error);
-        conceptId = (made.branch as { id: string }).id;
-      }
       const kp = points.split("\n").map((k) => k.trim()).filter(Boolean);
-      const body = item.raw + (kp.length ? "\n\nKey points:\n" + kp.map((k) => "• " + k).join("\n") : "");
-      const saved = await createMemory({
-        data: item.connectorName
-          ? { title: title.trim() || item.raw.slice(0, 80), body, memoryType: "text", tags: item.keywords, conceptId }
-          : { title: title.trim() || item.raw.slice(0, 80), body, transcript: item.raw, memoryType: "voice", tags: item.keywords, conceptId },
+      // One atomic server call: branch + memory + links + queue status commit or roll back together.
+      const res = await approveReviewItem({
+        data: { id: item.id, action, targetId: target || null, branchName: name.trim(), title: title.trim(), keyPoints: kp },
       });
-      if (saved && "ok" in saved && saved.ok === false) throw new Error(saved.error);
-      await resolveReview({ data: { id: item.id, status: "approved" } });
+      if (!res.ok) throw new Error(res.error);
     },
     onSuccess: () => {
       toast.success("Added to your mesh");

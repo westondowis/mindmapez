@@ -20,7 +20,30 @@ $("allow").onclick = async () => {
   status(ok ? `Allowed ${site}.` : "Not allowed.");
 };
 
-$("poll").onclick = () => {
-  chrome.runtime.sendMessage("poll-now");
+$("poll").onclick = async () => {
   status("Checking for approved actions…");
+  await chrome.runtime.sendMessage("poll-now");
+  status("Checked.");
+  showConnection();
 };
+
+// Connection status written by the background poll on every cycle.
+function ago(ms) {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
+}
+async function showConnection() {
+  const { status } = await chrome.storage.local.get(["status"]);
+  const el = $("conn");
+  if (!status) {
+    el.textContent = "Not checked yet.";
+    return;
+  }
+  const bad = !!status.lastError && !status.lastCount;
+  el.style.background = bad ? "#fee2e2" : "#dcfce7";
+  el.textContent = bad
+    ? `Error: ${status.lastError} (${ago(status.lastPollAt)})`
+    : `Connected, last check ${ago(status.lastPollAt)}, ${status.lastCount} action${status.lastCount === 1 ? "" : "s"} run${status.lastError ? `. Last error: ${status.lastError}` : "."}`;
+}
+showConnection();
+chrome.storage.onChanged.addListener((_c, area) => area === "local" && showConnection());

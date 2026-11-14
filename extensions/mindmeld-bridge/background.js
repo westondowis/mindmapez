@@ -67,20 +67,45 @@ async function run(cfg, a) {
   return out?.result ?? null;
 }
 
+async function record(status, badge, color) {
+  await chrome.storage.local.set({ status });
+  await chrome.action.setBadgeText({ text: badge });
+  if (badge) await chrome.action.setBadgeBackgroundColor({ color });
+}
+
+// Every cycle records { lastPollAt, lastError, lastCount } for the popup and sets the toolbar badge:
+// "!" on an auth/network error, the number of actions run when there were any, otherwise blank.
 async function poll() {
+  const lastPollAt = Date.now();
   const cfg = await settings();
-  if (!cfg) return;
-  const { actions } = await api(cfg, "GET");
-  for (const a of actions ?? []) {
-    try {
-      const result = await run(cfg, a);
-      await api(cfg, "POST", { id: a.id, ok: true, result });
-    } catch (err) {
-      await api(cfg, "POST", { id: a.id, ok: false, error: String(err?.message ?? err).slice(0, 200) });
+  if (!cfg) return record({ lastPollAt, lastError: "Not set up: add the MindMeld URL and token.", lastCount: 0 }, "!", "#b45309");
+  let lastCount = 0;
+  let lastError = null;
+  try {
+    const { actions } = await api(cfg, "GET");
+    for (const a of actions ?? []) {
+      lastCount += 1;
+      try {
+        const result = await run(cfg, a);
+        await api(cfg, "POST", { id: a.id, ok: true, result });
+      } catch (err) {
+        const message = String(err?.message ?? err).slice(0, 200);
+        lastError = message;
+        await api(cfg, "POST", { id: a.id, ok: false, error: message });
+      }
     }
+  } catch (err) {
+    const m = String(err?.message ?? err);
+    lastError = /bridge 40[13]/.test(m) ? "Sign-in rejected: check the connector token." : `Cannot reach MindMeld (${m.slice(0, 120)})`;
+    return record({ lastPollAt, lastError, lastCount }, "!", "#b91c1c");
   }
+  await record({ lastPollAt, lastError, lastCount }, lastCount ? String(lastCount) : "", "#15803d");
 }
 
 chrome.runtime.onInstalled.addListener(() => chrome.alarms.create("poll", { periodInMinutes: POLL_MINUTES }));
 chrome.alarms.onAlarm.addListener((alarm) => alarm.name === "poll" && poll().catch(() => undefined));
-chrome.runtime.onMessage.addListener((msg) => msg === "poll-now" && poll().catch(() => undefined));
+chrome.runtime.onMessage.addListener((msg, _s, reply) => {
+  if (msg !== "poll-now") return;
+  poll().catch(() => undefined).finally(() => reply(true));
+  return true; // keep the channel open until the poll finishes
+});

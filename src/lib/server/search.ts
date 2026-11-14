@@ -3,7 +3,7 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 import { scoreText } from "@/lib/organize";
 import { mapMemory, type MemoryRow } from "./map";
-import { grokChat } from "./ai";
+import { llmChat } from "./ai";
 import { ensureUserSettings } from "./seed";
 
 export const searchMemories = createServerFn({ method: "POST" })
@@ -60,7 +60,7 @@ export const searchMemories = createServerFn({ method: "POST" })
       .map((r) => `- ${r.memory.id}: ${r.memory.title} — ${(r.memory.aiSummary ?? r.memory.body).slice(0, 140)}`)
       .join("\n");
 
-    const ai = await grokChat(
+    const ai = await llmChat(
       [
         {
           role: "system",

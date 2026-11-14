@@ -1,24 +1,37 @@
 import { organizeLocal, parseOrganizeJson } from "@/lib/organize";
 import type { OrganizeResult } from "@/lib/types";
 
-const MODEL = "grok-4.5";
+export type LlmConfig = { apiKey: string; baseUrl: string; model: string };
 
-export async function grokChat(
+/**
+ * Provider-agnostic chat config (any OpenAI-compatible endpoint).
+ * LLM_API_KEY selects a provider (default OpenAI); otherwise XAI_API_KEY keeps the xAI default.
+ * LLM_BASE_URL and LLM_MODEL override either. Returns null when no key is configured.
+ */
+export function llmConfig(env: Record<string, string | undefined> = process.env): LlmConfig | null {
+  const llmKey = env.LLM_API_KEY?.trim();
+  const apiKey = llmKey || env.XAI_API_KEY?.trim();
+  if (!apiKey) return null;
+  const baseUrl = (env.LLM_BASE_URL?.trim() || (llmKey ? "https://api.openai.com/v1" : "https://api.x.ai/v1")).replace(/\/+$/, "");
+  const model = env.LLM_MODEL?.trim() || (llmKey ? "gpt-4o-mini" : "grok-4.5");
+  return { apiKey, baseUrl, model };
+}
+
+export async function llmChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   opts: { maxTokens?: number; temperature?: number } = {},
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
-  const apiKey = process.env.XAI_API_KEY;
-  if (!apiKey) return { ok: false, error: "AI is not available in this environment" };
-
+  const cfg = llmConfig();
+  if (!cfg) return { ok: false, error: "AI is not available in this environment" };
   try {
-    const res = await fetch("https://api.x.ai/v1/chat/completions", {
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${cfg.apiKey}`,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: cfg.model,
         messages,
         max_tokens: opts.maxTokens ?? 700,
         temperature: opts.temperature ?? 0.4,
@@ -26,7 +39,7 @@ export async function grokChat(
       signal: AbortSignal.timeout(25_000),
     });
     if (!res.ok) {
-      return { ok: false, error: `xAI API error ${res.status}` };
+      return { ok: false, error: `LLM API error ${res.status}` };
     }
     const body = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
@@ -37,12 +50,15 @@ export async function grokChat(
   }
 }
 
+/** @deprecated Use llmChat. Kept so older imports keep working. */
+export const grokChat = llmChat;
+
 export async function organizeMemory(
   raw: string,
   existingTitle?: string,
 ): Promise<OrganizeResult> {
   const fallback = organizeLocal(raw, existingTitle);
-  const result = await grokChat(
+  const result = await llmChat(
     [
       {
         role: "system",
@@ -59,7 +75,7 @@ export async function organizeMemory(
 
 export async function suggestTags(raw: string, existing: string[] = []): Promise<string[]> {
   const fallback = organizeLocal(raw).tags;
-  const result = await grokChat(
+  const result = await llmChat(
     [
       {
         role: "system",

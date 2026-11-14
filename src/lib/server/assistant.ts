@@ -3,7 +3,8 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 import { newId } from "@/lib/utils";
 import { scoreText } from "@/lib/organize";
-import { grokChat } from "./ai";
+import { llmChat } from "./ai";
+import { likePatterns } from "@/lib/search-tokens";
 import { ensureUserSettings } from "./seed";
 import type { AssistantMessage } from "@/lib/types";
 import { extractKeywords, parseIntent, verbosityHint } from "@/lib/voice";
@@ -46,10 +47,27 @@ export const askAssistant = createServerFn({ method: "POST" })
       values (${newId()}, ${context.userId}, 'user', ${prompt})
     `;
 
-    const memories = await sql<{ id: string; title: string; body: string; ai_summary: string | null; emotion: string | null; tags_json: string; created_at: string }>`
-      select id, title, body, ai_summary, emotion, tags_json, created_at
-      from memories where user_id = ${context.userId}
-    `;
+    // Pre-filter in SQL so a big mesh is never loaded wholesale: rows must mention a question word.
+    // With no usable words (e.g. "how are you"), fall back to the most recent memories.
+    type Row = { id: string; title: string; body: string; ai_summary: string | null; emotion: string | null; tags_json: string; created_at: string | Date };
+    const patterns = likePatterns(prompt);
+    const memories = patterns.length
+      ? await sql<Row>`
+          select id, title, body, ai_summary, emotion, tags_json, created_at
+          from memories
+          where user_id = ${context.userId}
+            and (title ilike any(${patterns}::text[])
+              or body ilike any(${patterns}::text[])
+              or coalesce(ai_summary, '') ilike any(${patterns}::text[])
+              or tags_json ilike any(${patterns}::text[]))
+          order by created_at desc
+          limit 60
+        `
+      : await sql<Row>`
+          select id, title, body, ai_summary, emotion, tags_json, created_at
+          from memories where user_id = ${context.userId}
+          order by created_at desc limit 60
+        `;
     const ranked = memories
       .map((m) => ({
         m,
@@ -101,7 +119,7 @@ export const askAssistant = createServerFn({ method: "POST" })
       tone = " " + verbosityHint({ turns: Number(rows[0]?.turns ?? 0), bargeIns: Number(rows[0]?.barge_ins ?? 0), topics }, prompt);
     }
 
-    const ai = await grokChat(
+    const ai = await llmChat(
       [
         {
           role: "system",
