@@ -73,7 +73,7 @@ export function MemorySheet({
         onClose();
       }}
     />
-    <aside onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} className="absolute inset-x-0 bottom-0 z-30 flex max-h-[min(72dvh,36rem)] w-full flex-col rounded-t-2xl border border-border bg-background/96 shadow-soft backdrop-blur-md md:inset-y-0 md:right-0 md:left-auto md:max-h-none md:max-w-md md:rounded-none md:border-y-0 md:border-r-0">
+    <aside onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} className="clear-bottom-nav absolute inset-x-0 z-30 flex max-h-[min(72dvh,36rem)] w-full flex-col rounded-t-2xl border border-border bg-background/96 shadow-soft backdrop-blur-md md:inset-y-0 md:bottom-0 md:right-0 md:left-auto md:max-h-none md:max-w-md md:rounded-none md:border-y-0 md:border-r-0">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-primary">{editing ? "Edit memory" : "Memory"}</p>
         <div className="flex items-center gap-1">

@@ -46,6 +46,27 @@ html, body {
   }
 }
 
+/* Bottom nav height excluding safe-area; 0 on desktop where the nav is hidden.
+   Measured at runtime from the nav box so large text still clears it. */
+:root {
+  --bottom-nav-h: 0px;
+  --bottom-chrome-gap: 0.75rem;
+  --content-bottom-pad: calc(var(--bottom-nav-h, 0px) + env(safe-area-inset-bottom, 0px) + var(--bottom-chrome-gap));
+}
+@media (max-width: 767px) {
+  :root {
+    --bottom-nav-h: 4rem;
+  }
+}
+@media (max-width: 767px) {
+  .above-bottom-nav {
+    bottom: var(--content-bottom-pad);
+  }
+  .clear-bottom-nav {
+    bottom: calc(var(--bottom-nav-h, 0px) + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 .mesh-field {
   background:
     radial-gradient(1100px 540px at 50% -10%, rgb(136 187 216 / 18%), transparent 55%),
@@ -205,7 +226,7 @@ html, body {
   }
   .mindmesh-flow .react-flow__controls {
     transform: none;
-    bottom: 5.75rem !important;
+    bottom: var(--content-bottom-pad) !important;
     left: 0.6rem !important;
     margin: 0;
   }

@@ -26,7 +26,7 @@ export function SectorEditor({
     label !== sector.label || kicker !== sector.kicker || emoji !== sector.emoji || color !== sector.color;
 
   return (
-    <aside className="absolute inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md rounded-t-2xl border border-border bg-background/95 p-5 shadow-soft backdrop-blur-md md:bottom-6 md:rounded-2xl">
+    <aside className="clear-bottom-nav absolute inset-x-0 z-30 mx-auto w-full max-w-md rounded-t-2xl border border-border bg-background/95 p-5 shadow-soft backdrop-blur-md md:bottom-6 md:rounded-2xl">
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-primary">Edit main branch</p>
       <h2 className="mt-1 font-display text-2xl">Make it yours</h2>
       <p className="mt-1 text-sm text-muted-foreground">

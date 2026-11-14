@@ -75,7 +75,7 @@ function RootDocument() {
             <AccountPersistHost>
               <GithubSyncHost />
               <Outlet />
-              <Toaster theme="dark" position="bottom-center" richColors={false} />
+              <Toaster theme="dark" position="bottom-center" offset="var(--content-bottom-pad)" richColors={false} />
             </AccountPersistHost>
           </AuthProvider>
         </QueryClientProvider>

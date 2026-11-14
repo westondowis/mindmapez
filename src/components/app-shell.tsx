@@ -11,7 +11,8 @@ import {
   Settings,
   Sunrise,
 } from "lucide-react";
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
+import { BOTTOM_NAV_CSS_VAR, CONTENT_BOTTOM_PADDING, bottomNavCssValue, readBottomNavBox } from "@/lib/bottom-chrome";
 import { ImportDropHost } from "@/components/import-drop-host";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,26 @@ export function AppShell({
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { user, isPending } = useCurrentUserState();
   const meshTap = useRef(0);
+  const navRef = useRef<HTMLElement>(null);
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const apply = () => {
+      const value = locked ? "0px" : bottomNavCssValue(readBottomNavBox(navRef.current));
+      root.style.setProperty(BOTTOM_NAV_CSS_VAR, value);
+    };
+    apply();
+    const nav = navRef.current;
+    const ro = nav ? new ResizeObserver(apply) : null;
+    if (nav && ro) ro.observe(nav);
+    const mq = window.matchMedia("(min-width: 768px)");
+    mq.addEventListener("change", apply);
+    return () => {
+      ro?.disconnect();
+      mq.removeEventListener("change", apply);
+      root.style.removeProperty(BOTTOM_NAV_CSS_VAR);
+    };
+  }, [locked]);
 
   function onMeshPress(event: React.MouseEvent | React.TouchEvent) {
     const now = Date.now();
@@ -140,15 +161,21 @@ export function AppShell({
       <main
         className={cn(
           "relative z-10 min-h-dvh",
-          locked ? "pb-0 md:pl-0" : "pb-20 md:pb-0 md:pl-16",
+          locked ? "md:pl-0" : "md:pl-16",
           !bleed && "px-4 py-5 sm:px-6 lg:px-8",
         )}
+        style={bleed || locked ? undefined : { paddingBottom: CONTENT_BOTTOM_PADDING }}
       >
         {children}
       </main>
 
       {!locked ? (
-        <nav className="fixed inset-x-0 bottom-0 z-30 flex h-16 items-center justify-around border-t border-border bg-background/90 px-1 py-1.5 backdrop-blur-md touch-manipulation md:hidden" style={{ transform: "none", zoom: 1 }}>
+        <nav
+          ref={navRef}
+          data-testid="bottom-nav"
+          className="fixed inset-x-0 bottom-0 z-30 flex min-h-16 items-center justify-around border-t border-border bg-background/90 px-1 pt-1.5 backdrop-blur-md touch-manipulation md:hidden"
+          style={{ transform: "none", zoom: 1, paddingBottom: "calc(0.375rem + env(safe-area-inset-bottom, 0px))" }}
+        >
           {(
             [
               NAV[0],
