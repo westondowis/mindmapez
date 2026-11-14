@@ -53,7 +53,7 @@ function AssistantPage() {
           title="Ask the mesh"
           description="A private assistant that only knows your memories — the lessons, the loops, and the things you keep rediscovering."
         />
-        <div className="flex min-h-[48vh] flex-col rounded-2xl border border-border bg-card/70">
+        <div className="flex min-h-[48dvh] flex-col rounded-2xl border border-border bg-card/70">
           <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
             {!q.data?.length && !ask.isPending ? (
               <div className="grid gap-2">

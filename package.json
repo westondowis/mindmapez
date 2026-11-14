@@ -16,7 +16,7 @@
     "preview:stop": "node scripts/preview.mjs stop",
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/ingest.test.ts src/lib/brain.test.ts src/lib/github-store.test.ts src/lib/synapse.test.ts src/lib/voice-session.test.ts src/lib/search-tokens.test.ts src/lib/branch-memories.test.ts src/lib/branch-anchor.test.ts src/lib/bottom-chrome.test.ts src/lib/connectors/connectors.test.ts src/lib/connectors/mcp.test.ts src/lib/connectors/outbound.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/ingest.test.ts src/lib/brain.test.ts src/lib/github-store.test.ts src/lib/synapse.test.ts src/lib/voice-session.test.ts src/lib/search-tokens.test.ts src/lib/branch-detail-state.test.ts src/lib/branch-memories.test.ts src/lib/branch-anchor.test.ts src/lib/bottom-chrome.test.ts src/lib/connectors/connectors.test.ts src/lib/connectors/mcp.test.ts src/lib/connectors/outbound.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

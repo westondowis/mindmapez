@@ -11,7 +11,7 @@ function errorMessage(error: unknown): string {
 
 export function AppErrorComponent({ error }: ErrorComponentProps) {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
       <span className="text-problem" aria-hidden="true">
         <TriangleAlert className="size-10" strokeWidth={2} />
       </span>

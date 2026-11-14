@@ -57,6 +57,7 @@ import { memoryContentLength, synapseLayout } from "@/lib/synapse";
 import { nodeTypes } from "./nodes";
 import { GraphSearchDialog } from "./graph-search";
 import { BranchDetailOverlay } from "./branch-detail-overlay";
+import { DETAIL_CLOSED, centerYAbovePanel, isDoubleTap, selectDetail, toggleDetail, type DetailState, type Tap } from "@/lib/branch-detail-state";
 import { branchUpDestination, lockBranchViewport } from "./branch-viewport";
 import { reconcileGraphNodes } from "@/lib/graph-presentation";
 import { resolveSearchTarget, type SearchTarget } from "@/lib/graph-search";
@@ -504,6 +505,19 @@ function toBranchElements(
   return { nodes, edges };
 }
 
+/** While the details sheet is open, pan so the selected node stays centred in the space above it. */
+function KeepVisible({ nodeId, panelPx }: { nodeId: string | null; panelPx: number }) {
+  const flow = useReactFlow();
+  useEffect(() => {
+    if (!nodeId || panelPx <= 0) return;
+    const node = flow.getNode(nodeId);
+    if (!node) return;
+    const { zoom } = flow.getViewport();
+    void flow.setCenter(node.position.x, centerYAbovePanel(node.position.y, zoom, panelPx), { zoom, duration: 260 });
+  }, [nodeId, panelPx, flow]);
+  return null;
+}
+
 /** Wait for real node measurements before centering a deep-search destination. */
 function SearchFocus({ target }: { target: { id: string; request: number } | null }) {
   const ready = useNodesInitialized();
@@ -565,7 +579,11 @@ export function MeshCanvas({
   const [searchFocus, setSearchFocus] = useState<{ id: string; request: number } | null>(null);
   const searchSequence = useRef(0);
   const consumedTarget = useRef<string | null>(null);
-  const [detailBranchId, setDetailBranchId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<DetailState>(DETAIL_CLOSED);
+  const detailBranchId = detail.branchId;
+  const setDetailBranchId = useCallback((id: string | null) => setDetail((d) => (id ? selectDetail(d, id) : DETAIL_CLOSED)), []);
+  const [panelPx, setPanelPx] = useState(0);
+  const lastTap = useRef<Tap | null>(null);
   const [sortAsk, setSortAsk] = useState(false);
   const [mounted, setMounted] = useState(false);
   const onSelectRef = useRef(onSelectMemory);
@@ -1121,6 +1139,19 @@ export function MeshCanvas({
             }
             const concept = graph.concepts.find((c) => c.id === node.id);
             if (!concept) return;
+            const now = Date.now();
+            const twice = isDoubleTap(lastTap.current, concept.id, now);
+            lastTap.current = twice ? null : { id: concept.id, at: now };
+            if (twice) {
+              // iOS rarely fires dblclick on touch: two quick taps enter the branch, panel open or not.
+              setSearchFocus(null);
+              setDetailBranchId(null);
+              setSelectedId(concept.id);
+              setSectorId(concept.sectorId);
+              setBranchId(concept.id);
+              setExpanded((s) => new Set(s).add(concept.id));
+              return;
+            }
             setSelectedId(concept.id);
             setDetailBranchId(concept.id);
           }}
@@ -1165,6 +1196,7 @@ export function MeshCanvas({
         >
           <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgb(136 187 216 / 18%)" />
           <SearchFocus target={searchFocus} />
+          <KeepVisible nodeId={detail.expanded ? detail.branchId : null} panelPx={panelPx} />
           <Controls showInteractive={false} position="bottom-left" />
           <MiniMap
             position="bottom-right"
@@ -1183,7 +1215,13 @@ export function MeshCanvas({
       </div>
 
       {showFlow && detailBranch && selectedConcept && !composing && !editing && !editingSector && !sortAsk ? (
-        <BranchDetailOverlay branch={detailBranch} onClose={() => setDetailBranchId(null)}>
+        <BranchDetailOverlay
+          branch={detailBranch}
+          expanded={detail.expanded}
+          onToggle={() => setDetail((d) => toggleDetail(d))}
+          onClose={() => setDetailBranchId(null)}
+          onPanelHeight={setPanelPx}
+        >
           <Button
             type="button"
             size="sm"
@@ -1291,7 +1329,7 @@ export function MeshCanvas({
         />
       ) : null}
 
-      {showFlow && detailBranch && selectedConcept && !composing && !editing && !editingSector && !sortAsk ? (
+      {showFlow && detailBranch && selectedConcept && !composing && !editing && !editingSector && !sortAsk && !detail.expanded ? (
         <div className="pointer-events-none absolute inset-0 z-40 [&>*]:pointer-events-auto">
         <RecordDock
           key={selectedConcept.id}

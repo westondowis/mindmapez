@@ -866,7 +866,7 @@ export function CapturePanel({
               className={cn(
                 mode === "thought" ? "min-h-24" : "min-h-40",
                 body.length > 1200 && "min-h-64",
-                body.length > 6000 && "min-h-[50vh] max-h-[70vh]",
+                body.length > 6000 && "min-h-[50dvh] max-h-[70dvh]",
               )}
             />
             {body.length > 280 ? (
