@@ -692,7 +692,7 @@ export function BrainOverview({
         </button>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-2 bottom-3 z-20 md:inset-x-auto md:left-1/2 md:w-[min(100%-2rem,30rem)] md:-translate-x-1/2">
+      <div className="above-bottom-nav pointer-events-none absolute inset-x-2 z-20 md:inset-x-auto md:bottom-3 md:left-1/2 md:w-[min(100%-2rem,30rem)] md:-translate-x-1/2">
         {hovered ? (
           <div className="mb-1.5 rounded-xl border border-[#6a2ca8]/40 bg-black/75 px-3 py-2 backdrop-blur-md">
             <p className="text-sm font-medium text-white">{sectors.find((x) => x.id === hovered)?.label}</p>
