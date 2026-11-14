@@ -1210,7 +1210,7 @@ export function MeshCanvas({
         <button
           type="button"
           onClick={() => navigate({ to: "/capture" })}
-          className="absolute bottom-24 right-4 z-20 flex size-14 items-center justify-center rounded-full bg-highlight text-highlight-foreground shadow-soft md:bottom-8 md:right-8"
+          className="above-bottom-nav absolute right-4 z-20 flex size-14 items-center justify-center rounded-full bg-highlight text-highlight-foreground shadow-soft md:bottom-8 md:right-8"
           aria-label="Capture a thought"
         >
           <Plus className="size-6" />

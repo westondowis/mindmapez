@@ -111,7 +111,7 @@ export function RecordDock({
 
   return (
     <div className={cn(
-      "absolute bottom-[4.6rem] left-16 right-2 z-20 flex flex-col rounded-xl border border-border bg-background/95 shadow-soft backdrop-blur-md md:inset-x-auto md:left-1/2 md:right-auto md:w-[min(100%-1rem,26rem)] md:-translate-x-1/2 md:bottom-6",
+      "above-bottom-nav absolute left-16 right-2 z-20 flex flex-col rounded-xl border border-border bg-background/95 shadow-soft backdrop-blur-md md:inset-x-auto md:left-1/2 md:right-auto md:w-[min(100%-1rem,26rem)] md:-translate-x-1/2 md:bottom-6",
       open ? "max-h-[min(42dvh,20rem)]" : "max-h-12",
     )}>
       <button

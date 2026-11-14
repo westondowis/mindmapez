@@ -15,7 +15,7 @@ export function BranchDetailOverlay({ branch, onClose, children }: {
       <aside role="dialog" aria-modal={false} aria-label={`Branch details: ${branch.name}`}
         onPointerDown={event => event.stopPropagation()}
         onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}
-        className="pointer-events-auto absolute inset-x-2 bottom-36 max-h-[min(40dvh,22rem)] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-background/95 p-4 shadow-soft backdrop-blur-md md:inset-x-auto md:bottom-auto md:right-6 md:top-40 md:w-80">
+        className="above-bottom-nav pointer-events-auto absolute inset-x-2 max-h-[min(40dvh,22rem)] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-background/95 p-4 shadow-soft backdrop-blur-md md:inset-x-auto md:bottom-auto md:right-6 md:top-40 md:w-80">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-widest text-primary">Branch details</p>
