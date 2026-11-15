@@ -5,6 +5,8 @@
  * with its parent and a huge document never overflows the sector.
  */
 
+import { getMemoryCellCount } from "./synapse-route.ts";
+
 /** Distance between myelin segments along the axon. */
 export const SYNAPSE_PITCH = 14;
 /** Space taken by the soma and axon hillock before the first segment. */
@@ -47,7 +49,7 @@ export function synapseAxonLength(chars = 0): number {
  * @returns {SynapseLayout} Segment count and extents; width always covers the terminals.
  */
 export function synapseLayout(chars = 0): SynapseLayout {
-  const beads = Math.max(3, Math.round(synapseAxonLength(chars) / SYNAPSE_PITCH));
+  const beads = getMemoryCellCount(chars);
   const axonEnd = SYNAPSE_LEAD + beads * SYNAPSE_PITCH;
   return { beads, axonEnd, width: axonEnd + SYNAPSE_TAIL, length: beads * SYNAPSE_PITCH };
 }

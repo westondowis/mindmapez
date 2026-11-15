@@ -5,6 +5,7 @@ import { CONCEPT_ICONS } from "@/lib/concept-icons";
 import { KIND_COLOR } from "@/lib/kind-styles";
 import { nodeColorCss } from "@/lib/node-colors";
 import { SYNAPSE_LEAD, SYNAPSE_PITCH, synapseLayout } from "@/lib/synapse";
+import { BRANCH_RADIUS, MEMORY_BOX, pointOnRing, type MemoryRoute } from "@/lib/synapse-route";
 import type { NodeKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,10 @@ export type MemoryNodeData = {
   color?: string | null;
   synapse?: boolean;
   contentLength?: number;
+  /** Docked curved layout, in this node's own coordinates; absent for the free-floating strand. */
+  route?: MemoryRoute;
+  /** Branch centre in this node's coordinates (ring the terminals dock on). */
+  ringCenter?: { x: number; y: number };
   expanded?: boolean;
   onEdit?: () => void;
   onDismiss?: () => void;
@@ -263,12 +268,149 @@ function SynapseMark({ glow, chars }: { glow?: boolean; chars?: number }) {
   );
 }
 
+/** Curved neuron docked on its branch ring. Drawn in the node's coordinates; overflows the node box. */
+function RoutedSynapse({ route, ringCenter, glow }: { route: MemoryRoute; ringCenter: { x: number; y: number }; glow?: boolean }) {
+  const uid = useId().replace(/:/g, "");
+  const reduced = usePrefersReducedMotion();
+  const { soma, c1, c2, forkBase, cells, cellCount, length, somaAngle, angleDeg } = route;
+  const axon = `M${soma.x} ${soma.y} C${c1.x} ${c1.y} ${c2.x} ${c2.y} ${forkBase.x} ${forkBase.y}`;
+  const currentPath = `M${forkBase.x} ${forkBase.y} C${c2.x} ${c2.y} ${c1.x} ${c1.y} ${soma.x} ${soma.y}`;
+  const pitch = length / cellCount;
+  const cellW = Math.max(6, Math.min(15, pitch * 0.82));
+  const prongs = [-9, 0, 9].map((d) => pointOnRing(ringCenter, BRANCH_RADIUS, angleDeg + d));
+  return (
+    <svg
+      aria-hidden
+      className="synapse-svg pointer-events-none absolute left-0 top-0 overflow-visible"
+      width="1"
+      height="1"
+      style={{ opacity: glow === false ? 0.85 : undefined }}
+    >
+      <defs>
+        <radialGradient id={`soma-${uid}`} cx="45%" cy="40%" r="70%">
+          <stop offset="0%" stopColor="#5b8dff" />
+          <stop offset="70%" stopColor="#1b2f9a" />
+          <stop offset="100%" stopColor="#0f1a5e" />
+        </radialGradient>
+        <radialGradient id={`core-${uid}`}>
+          <stop offset="0%" stopColor="#ffd9ff" />
+          <stop offset="60%" stopColor="#d46bff" />
+          <stop offset="100%" stopColor="#8a2be2" />
+        </radialGradient>
+        <linearGradient id={`sheath-${uid}`} x1="0" x2="1">
+          <stop offset="0%" stopColor="#b44cff" stopOpacity="0.5" />
+          <stop offset="100%" stopColor="#d9a0ff" stopOpacity="0.3" />
+        </linearGradient>
+      </defs>
+
+      {/* axon */}
+      <path d={axon} fill="none" stroke="#cf8cff" strokeWidth="1.2" strokeLinecap="round" />
+
+      {/* dendrites + soma, turned so the axon leaves along +x */}
+      <g transform={`translate(${soma.x} ${soma.y}) rotate(${somaAngle}) scale(0.78) translate(-30 -30)`}>
+        <g fill="none" stroke="#4aa3ff" strokeWidth="1.3" strokeLinecap="round" opacity="0.9">
+          <path d="M20 24 C12 18 8 12 5 5" />
+          <path d="M19 28 C10 26 5 24 1 21" />
+          <path d="M18 32 C9 33 4 35 1 39" />
+          <path d="M20 37 C13 42 10 48 7 55" />
+          <path d="M26 19 C23 13 22 8 18 3" />
+          <path d="M26 41 C24 47 23 51 20 57" />
+        </g>
+        <circle className="synapse-ring" cx="30" cy="30" r="12" fill="none" stroke="#9a7bff" strokeWidth="1.2" />
+        <g className="synapse-soma">
+          <circle cx="30" cy="30" r="12" fill={`url(#soma-${uid})`} stroke="#7fbfff" strokeWidth="1.4" />
+          <circle cx="30" cy="30" r="8" fill="none" stroke="#a98bff" strokeWidth="0.6" opacity="0.7" />
+          <circle cx="30" cy="30" r="5" fill={`url(#core-${uid})`} />
+        </g>
+      </g>
+
+      {/* myelin cells sampled along the curve, each turned to the local tangent */}
+      {cells.map((c, i) => {
+        const h = 13 - 3.5 * (i / Math.max(1, cellCount - 1));
+        // Seconds into the pulse when the current (ring -> soma) reaches this cell.
+        const reach = (0.1 + 0.75 * (1 - (i + 0.5) / cellCount)) * PULSE_SECONDS;
+        return (
+          <g key={i} className="synapse-myelin" style={{ animationDelay: `${reach.toFixed(2)}s` }} transform={`translate(${c.x} ${c.y}) rotate(${c.angle})`}>
+            <rect x={-cellW / 2} y={-h / 2} width={cellW} height={h} rx="4" fill={`url(#sheath-${uid})`} stroke="#e2b8ff" strokeWidth="0.8" />
+            <path d={`M${-cellW / 2 + 2} ${-h / 2 + 2.6} H${cellW / 2 - 2}`} stroke="#fff" strokeOpacity="0.55" strokeWidth="0.7" strokeLinecap="round" />
+          </g>
+        );
+      })}
+
+      {/* terminal fork: prongs run inward along the incoming tangent and dock on the ring */}
+      <g fill="none" stroke="#c58bff" strokeWidth="1.2" strokeLinecap="round">
+        {prongs.map((p, i) => (
+          <path key={i} d={`M${forkBase.x} ${forkBase.y} L${p.x} ${p.y}`} />
+        ))}
+      </g>
+      <g fill="#e2b8ff">
+        {prongs.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="1.9" />
+        ))}
+      </g>
+
+      {/* current from the ring to the soma along the real curve */}
+      <g fill="none" strokeLinecap="round">
+        <path className="synapse-current synapse-current-halo" d={currentPath} pathLength={100} stroke="#d46bff" strokeWidth="6" />
+        <path className="synapse-current synapse-current-core" d={currentPath} pathLength={100} stroke="#ffffff" strokeWidth="2.6" />
+      </g>
+      {reduced
+        ? null
+        : [0, 0.1, 0.2, 0.3].map((lag, i) => (
+            <circle key={i} r={4 - i * 0.9} fill={i === 0 ? "#ffffff" : "#e2b8ff"} opacity="0">
+              <animateMotion dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" path={currentPath} keyTimes="0;1" calcMode="linear" />
+              <animate attributeName="opacity" dur={`${PULSE_SECONDS}s`} begin={`${lag}s`} repeatCount="indefinite" values={`0;${(1 - i * 0.22).toFixed(2)};${(1 - i * 0.22).toFixed(2)};0`} keyTimes="0;0.1;0.85;1" />
+            </circle>
+          ))}
+    </svg>
+  );
+}
+
 export function MemoryNode({ data }: NodeProps) {
   const d = data as MemoryNodeData;
   const color = d.color ? nodeColorCss(d.color) : KIND_COLOR[d.kind];
   const stop = (event: React.SyntheticEvent) => {
     event.stopPropagation();
   };
+  if (d.route && d.ringCenter) {
+    const { somaX, somaY } = MEMORY_BOX;
+    return (
+      <div
+        className={cn("relative rounded-lg", d.dimmed && "opacity-20", d.synapse && "synapse-node", d.focused && "ring-2 ring-highlight ring-offset-4 ring-offset-background")}
+        style={{ width: MEMORY_BOX.w, height: MEMORY_BOX.h }}
+      >
+        <Handle type="target" position={Position.Left} style={{ left: somaX, top: somaY, opacity: 0 }} />
+        <Handle type="source" position={Position.Right} style={{ left: somaX, top: somaY, opacity: 0 }} />
+        <RoutedSynapse route={d.route} ringCenter={d.ringCenter} glow={d.glow || d.recent || true} />
+        {d.emoji ? (
+          <span className="absolute text-[10px] leading-none" style={{ left: somaX - 5, top: somaY - 5, color }}>
+            {d.emoji}
+          </span>
+        ) : null}
+        <div className={cn("absolute rounded-full", d.recent && "animate-node-pulse")} style={{ left: somaX - 16, top: somaY - 16, width: 32, height: 32 }} />
+        {d.expanded ? (
+          <div className="nodrag nopan absolute z-10 w-[min(72vw,240px)] -translate-x-1/2 rounded-xl border border-border bg-background/95 p-2.5 text-left shadow-soft" style={{ left: somaX, top: somaY + 40 }}>
+            <div className="flex items-start gap-1">
+              <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">{d.title}</p>
+              <button type="button" className="grid size-9 shrink-0 place-items-center rounded-md text-foreground hover:bg-secondary" aria-label="Edit memory" onPointerDown={stop} onClick={(event) => { stop(event); d.onEdit?.(); }}>
+                <SquarePen className="size-4" />
+              </button>
+              <button type="button" className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Hide memory" onPointerDown={stop} onClick={(event) => { stop(event); d.onDismiss?.(); }}>
+                <X className="size-4" />
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {/* title beside the soma, on the side away from the branch so it never crosses the axon */}
+        <p
+          className="absolute max-w-[7.5rem] truncate text-xs text-foreground/80"
+          style={{ left: somaX, top: somaY + 17, transform: "translateX(-50%)" }}
+        >
+          {d.title}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className={cn("relative flex h-[67px] flex-col items-center rounded-lg", d.dimmed && "opacity-20", d.synapse && "synapse-node", d.focused && "ring-2 ring-highlight ring-offset-4 ring-offset-background")}
       style={{ width: Math.max(120, synapseLayout(d.contentLength).width * 0.78) }}>

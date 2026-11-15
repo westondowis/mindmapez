@@ -9,6 +9,7 @@ import {
   useNodesState,
   useNodesInitialized,
   useReactFlow,
+  useViewport,
   useNodes,
   type Edge,
   type Node,
@@ -54,6 +55,18 @@ import { layoutAnchoredMemories, memoriesForBranch } from "@/lib/branch-memories
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { memoryContentLength, synapseLayout } from "@/lib/synapse";
+import {
+  BRANCH_RADIUS,
+  SAFE_MARGIN,
+  bowSideFor,
+  getMemoryCellCount,
+  memoryNodeOrigin,
+  routeMemory,
+  spreadSomaY,
+  terminalAngles,
+  tierFor,
+  translateRoute,
+} from "@/lib/synapse-route";
 import { nodeTypes } from "./nodes";
 import { GraphSearchDialog } from "./graph-search";
 import { BranchDetailOverlay } from "./branch-detail-overlay";
@@ -276,6 +289,7 @@ function toBranchElements(
   editingId: string | null,
   sectors: BrainSector[],
   memory: { openId: string | null; onEdit: (id: string) => void; onDismiss: () => void },
+  safeX: { minX: number; maxX: number } | null = null,
 ) {
   const sector = sectorById(sectorId, sectors);
   const nodes: Node[] = [];
@@ -446,17 +460,35 @@ function toBranchElements(
   });
   const memories = memoriesForBranch(graph.memories, graph.connections, current.id);
   const hub = nodes.find((n) => n.id === current.id)?.position ?? { x: 0, y: 0 };
-  const placed = layoutAnchoredMemories(
-    memories.map((m) => ({ id: m.id, anchorId: current.id, contentLength: memoryContentLength(m) })),
-    new Map([[current.id, hub]]),
-    (c) => synapseLayout(c).width,
-  );
-  memories.forEach((m) => {
+  // Every memory docks on the ring of the branch it belongs to; the axon bends to stay inside the safe band.
+  const ringCenter = { x: hub.x + 56, y: hub.y + 32 };
+  const angles = terminalAngles(memories.length);
+  const routeOpts = memories.map((m, i) => ({
+    center: ringCenter,
+    radius: BRANCH_RADIUS,
+    angleDeg: angles[i]!,
+    cellCount: getMemoryCellCount(memoryContentLength(m) || (m.title?.length ?? 0)),
+    minX: safeX?.minX,
+    maxX: safeX?.maxX,
+    bowSide: bowSideFor(angles[i]!, i),
+    tier: tierFor(i),
+  }));
+  // Keep somas on each arc at least a label-height apart so neighbours never stack.
+  const somaYs: (number | undefined)[] = routeOpts.map(() => undefined);
+  for (const arc of [(a: number) => a > 90 && a < 270, (a: number) => !(a > 90 && a < 270)]) {
+    const idx = routeOpts.map((_, i) => i).filter((i) => arc(angles[i]!));
+    const raw = idx.map((i) => routeMemory(routeOpts[i]!).soma.y);
+    const order = idx.map((_, k) => k).sort((a, b) => raw[a]! - raw[b]!);
+    const spread = spreadSomaY(order.map((k) => raw[k]!), 62);
+    order.forEach((k, r) => { somaYs[idx[k]!] = spread[r]; });
+  }
+  memories.forEach((m, i) => {
     const created = new Date(m.createdAt).getTime();
-    const chars = memoryContentLength(m);
-    const spot = placed.get(m.id);
-    if (!spot) return;
-    const { x, y } = spot;
+    const chars = memoryContentLength(m) || (m.title?.length ?? 0);
+    const abs = routeMemory({ ...routeOpts[i]!, somaY: somaYs[i] });
+    const { x, y } = memoryNodeOrigin(abs.soma);
+    const route = translateRoute(abs, -x, -y);
+    const rel = { x: ringCenter.x - x, y: ringCenter.y - y };
     nodes.push({
       id: m.id,
       type: "memory",
@@ -472,6 +504,9 @@ function toBranchElements(
         color: m.color,
         synapse: true,
         contentLength: chars,
+        route,
+        ringCenter: rel,
+        offset: { x: x - hub.x, y: y - hub.y },
         anchorId: current.id,
         expanded: memory.openId === m.id,
         onEdit: () => memory.onEdit(m.id),
@@ -503,6 +538,13 @@ function toBranchElements(
     });
   }
   return { nodes, edges };
+}
+
+/** Mirrors the live pan/zoom into a ref so the safe band can be snapshotted without re-rendering the canvas. */
+function ViewportProbe({ target }: { target: { current: { x: number; y: number; zoom: number } } }) {
+  const { x, y, zoom } = useViewport();
+  target.current = { x, y, zoom };
+  return null;
 }
 
 /** While the details sheet is open, pan so the selected node stays centred in the space above it. */
@@ -617,6 +659,34 @@ export function MeshCanvas({
       : null
     : false;
 
+  // Safe horizontal band (flow units) for neuron somas: 44px inside the canvas edges at the current view.
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef({ x: 0, y: 0, zoom: 1 });
+  const [safeX, setSafeX] = useState<{ minX: number; maxX: number } | null>(null);
+  const safeXRef = useRef(safeX);
+  safeXRef.current = safeX;
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || typeof window === "undefined") return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const { x, zoom } = viewportRef.current;
+      if (w <= 0 || zoom <= 0) return;
+      const next = { minX: (SAFE_MARGIN - x) / zoom, maxX: (w - SAFE_MARGIN - x) / zoom };
+      const cur = safeXRef.current;
+      if (cur && Math.abs(cur.minX - next.minX) < 8 && Math.abs(cur.maxX - next.maxX) < 8) return;
+      setSafeX(next);
+    };
+    // Wait for the view to settle after a navigation (fitView animates), then snapshot the band.
+    const t = window.setTimeout(measure, 650);
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => measure());
+    ro?.observe(el);
+    return () => {
+      window.clearTimeout(t);
+      ro?.disconnect();
+    };
+  }, [sectorId, branchId]);
+
   const built = useMemo(() => {
     const memory = { openId: openMemoryId, onEdit: editMemory, onDismiss: dismissMemory };
     if (touring) return toTourElements(graph, tourFilter, tourFocus, memory);
@@ -631,8 +701,9 @@ export function MeshCanvas({
       editing?.id ?? null,
       graph.sectors?.length ? graph.sectors : defaultSectors(),
       memory,
+      safeX,
     );
-  }, [graph, touring, tourFilter, tourFocus, sectorId, branchId, selectedId, composing, draftParent, expanded, editing, openMemoryId, editMemory, dismissMemory]);
+  }, [safeX, graph, touring, tourFilter, tourFocus, sectorId, branchId, selectedId, composing, draftParent, expanded, editing, openMemoryId, editMemory, dismissMemory]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
@@ -706,6 +777,11 @@ export function MeshCanvas({
         if (!mems.length) return nds;
         const placed = layoutAnchoredMemories(mems, new Map([[node.id, node.position]]), (c) => synapseLayout(c).width);
         return nds.map((n) => {
+          // Docked neurons move rigidly with their branch: same offset, same curve.
+          const off = (n.data as { offset?: { x: number; y: number }; anchorId?: string }).offset;
+          if (n.type === "memory" && off && (n.data as { anchorId?: string }).anchorId === node.id) {
+            return { ...n, position: { x: node.position.x + off.x, y: node.position.y + off.y } };
+          }
           const p = placed.get(n.id);
           return p ? { ...n, position: { x: p.x, y: p.y } } : n;
         });
@@ -1080,7 +1156,7 @@ export function MeshCanvas({
       ) : null}
       </div>
       {/* Canvas bounds depend only on navigation level, never selection or floating card height. */}
-      <div data-testid="graph-canvas-frame" className={cn("absolute inset-x-0 bottom-0 overflow-hidden", showFlow ? "top-48 md:top-36" : "top-28")}>
+      <div ref={frameRef} data-testid="graph-canvas-frame" className={cn("absolute inset-x-0 bottom-0 overflow-hidden", showFlow ? "top-48 md:top-36" : "top-28")}>
       {!showFlow ? (
         <BrainOverview
           concepts={graph.concepts}
@@ -1196,6 +1272,7 @@ export function MeshCanvas({
         >
           <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgb(136 187 216 / 18%)" />
           <SearchFocus target={searchFocus} />
+          <ViewportProbe target={viewportRef} />
           <KeepVisible nodeId={detail.expanded ? detail.branchId : null} panelPx={panelPx} />
           <Controls showInteractive={false} position="bottom-left" />
           <MiniMap
