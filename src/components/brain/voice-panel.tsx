@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { listReviews, queueReview, recordVoiceTurn } from "@/lib/server/reviews";
-import { SILENT_WAV, VAD_SILENCE_MS, preferRecognitionOnly } from "@/lib/voice";
+import { RECOGNIZER_RESTART_MS, SILENT_WAV, VAD_SILENCE_MS, isEchoOf, preferRecognitionOnly } from "@/lib/voice";
 import { createTurnProcessor } from "@/lib/voice-ingest";
 import { startEnergyMonitor } from "@/lib/voice-energy";
 import { VoiceSession, type Phase, type Recognizer, type RecognizerEvents } from "@/lib/voice-session";
@@ -77,7 +77,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const [phase, setPhase] = useState<Phase>("idle");
   const [line, setLine] = useState("");
   const [reply, setReply] = useState("");
-  const [continuous, setContinuous] = useState(false);
+  const [continuous, setContinuous] = useState(true);
   const live = useRef({ voice, continuous, open, onSpeaking });
   live.current = { voice, continuous, open, onSpeaking };
   const bargedIn = useRef(false);
@@ -128,6 +128,9 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         },
         {
           silenceMs: VAD_SILENCE_MS,
+          restartMs: RECOGNIZER_RESTART_MS,
+          isUserSpeech: (heard, spoken) => !isEchoOf(heard, spoken),
+          onBargeIn: () => { bargedIn.current = true; },
           iosSingle,
           isContinuous: () => live.current.continuous,
           onPhase: setPhase,

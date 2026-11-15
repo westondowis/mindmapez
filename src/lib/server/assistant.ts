@@ -7,7 +7,7 @@ import { llmChat } from "./ai";
 import { likePatterns } from "@/lib/search-tokens";
 import { ensureUserSettings } from "./seed";
 import type { AssistantMessage } from "@/lib/types";
-import { extractKeywords, parseIntent, verbosityHint } from "@/lib/voice";
+import { extractKeywords, isSmallTalk, parseIntent, voiceSystemPrompt } from "@/lib/voice";
 
 export const listAssistant = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
@@ -50,8 +50,12 @@ export const askAssistant = createServerFn({ method: "POST" })
     // Pre-filter in SQL so a big mesh is never loaded wholesale: rows must mention a question word.
     // With no usable words (e.g. "how are you"), fall back to the most recent memories.
     type Row = { id: string; title: string; body: string; ai_summary: string | null; emotion: string | null; tags_json: string; created_at: string | Date };
+    // Voice greetings, small talk and filler never touch stored memories.
+    const skipMemory = !!data.voice && isSmallTalk(prompt);
     const patterns = likePatterns(prompt);
-    const memories = patterns.length
+    const memories = skipMemory
+      ? []
+      : patterns.length
       ? await sql<Row>`
           select id, title, body, ai_summary, emotion, tags_json, created_at
           from memories
@@ -95,7 +99,9 @@ export const askAssistant = createServerFn({ method: "POST" })
       limit 8
     `;
 
-    const concepts = await sql<{ id: string; name: string; sector_id: string | null; parent_id: string | null }>`
+    const concepts = skipMemory
+      ? []
+      : await sql<{ id: string; name: string; sector_id: string | null; parent_id: string | null }>`
       select id, name, sector_id, parent_id from concepts where user_id = ${context.userId} order by name
     `;
     const taxonomy = concepts
@@ -103,29 +109,20 @@ export const askAssistant = createServerFn({ method: "POST" })
       .map((c) => `${c.parent_id ? "  - " : "- "}${c.name}${c.sector_id ? ` [${c.sector_id}]` : ""}`)
       .join("\n");
 
-    let tone = "";
+    let styleProfile: string | null = null;
     if (data.voice) {
-      const rows = await sql<{ turns: number; barge_ins: number; topics_json: string }>`
-        select turns, barge_ins, topics_json from voice_telemetry where user_id = ${context.userId}
+      const rows = await sql<{ voice_style_profile: string | null }>`
+        select voice_style_profile from user_settings where user_id = ${context.userId}
       `;
-      let topics: string[] = [];
-      try {
-        topics = Object.entries(JSON.parse(rows[0]?.topics_json ?? "{}") as Record<string, number>)
-          .filter(([, n]) => n >= 3)
-          .map(([k]) => k);
-      } catch {
-        topics = [];
-      }
-      tone = " " + verbosityHint({ turns: Number(rows[0]?.turns ?? 0), bargeIns: Number(rows[0]?.barge_ins ?? 0), topics }, prompt);
+      styleProfile = rows[0]?.voice_style_profile ?? null;
     }
+    const system = data.voice
+      ? voiceSystemPrompt({ styleProfile, branchMap: taxonomy })
+      : "You are the MindMesh assistant. You know this person's memory network and the branch map below. When asked where to put something, name a real branch from the map. If none fits, say so and offer to create one. Be concise. No markdown headings.\n\nBranch map:\n" + (taxonomy || "(no branches yet)");
 
     const ai = await llmChat(
       [
-        {
-          role: "system",
-          content:
-            "You are the MindMesh assistant. You know this person's memory network and the branch map below. When asked where to put something, name a real branch from the map. If none fits, say so and offer to create one. Be concise. No markdown headings.\n\nBranch map:\n" + (taxonomy || "(no branches yet)") + tone,
-        },
+        { role: "system", content: system },
         ...history
           .reverse()
           .slice(0, -1)
@@ -135,10 +132,12 @@ export const askAssistant = createServerFn({ method: "POST" })
           })),
         {
           role: "user",
-          content: `Retrieved memories:\n${contextBlock || "(none)"}\n\nQuestion: ${prompt}`,
+          content: skipMemory
+            ? prompt
+            : `Retrieved memories:\n${contextBlock || "(none)"}\n\nQuestion: ${prompt}`,
         },
       ],
-      { maxTokens: 700, temperature: 0.5 },
+      { maxTokens: data.voice ? 120 : 700, temperature: 0.5 },
     );
 
     const text = ai.ok

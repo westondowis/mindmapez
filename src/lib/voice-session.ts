@@ -31,6 +31,12 @@ export type SessionPorts = {
 export type SessionOptions = {
   /** Quiet time after speech before a desktop thought is sent. */
   silenceMs: number;
+  /** Pause before a recognizer that ended with nothing heard is restarted in continuous mode. */
+  restartMs?: number;
+  /** Decides whether text heard while the assistant speaks is the user (true) or the speaker's own echo (false). */
+  isUserSpeech?: (heard: string, spoken: string) => boolean;
+  /** Fired when the user talks over the assistant. */
+  onBargeIn?: () => void;
   /** iOS WebKit: single-utterance sessions; continuous mode needs a tap per turn. */
   iosSingle: boolean;
   isContinuous: () => boolean;
@@ -49,6 +55,7 @@ export class VoiceSession {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private final = "";
   private interim = "";
+  private spoken = "";
 
   private ports: SessionPorts;
   private opts: SessionOptions;
@@ -105,8 +112,19 @@ export class VoiceSession {
           if (!live()) return;
           this.clearTimer();
           const t = this.text();
-          if (t) this.commit();
-          else this.toIdle(); // empty transcript: never thinking, never an API call
+          if (t) return this.commit();
+          // Continuous mode keeps the mic live: start a fresh recognizer (ended ones are never reused).
+          if (this.active && this.opts.isContinuous() && !this.opts.iosSingle && this.opts.restartMs !== undefined) {
+            this.gen++;
+            this.teardownRecognizer();
+            const g = this.gen;
+            this.timer = setTimeout(() => {
+              this.timer = null;
+              if (g === this.gen && this.active && this.phase === "listening") this.start();
+            }, this.opts.restartMs);
+            return;
+          }
+          this.toIdle(); // empty transcript: never thinking, never an API call
         },
         onError: (code) => {
           if (!live()) return;
@@ -182,6 +200,7 @@ export class VoiceSession {
     const done = () => {
       if (finished || turn !== this.turn) return;
       finished = true;
+      this.teardownRecognizer();
       this.opts.onSpeaking?.(false);
       if (!isError && this.active && this.opts.isContinuous() && !this.opts.iosSingle) {
         this.setPhase("idle");
@@ -191,7 +210,11 @@ export class VoiceSession {
       }
     };
     if (!text.trim()) return done();
-    if (!isError) this.setPhase("speaking");
+    if (!isError) {
+      this.setPhase("speaking");
+      this.spoken = text;
+      this.listenWhileSpeaking(turn);
+    }
     this.ports.speak(text, {
       onStart: () => {
         if (turn === this.turn) this.opts.onSpeaking?.(true);
@@ -199,6 +222,38 @@ export class VoiceSession {
       onEnd: done,
       onError: done,
     });
+  }
+
+  /** Keep the mic live while speaking so the user can interrupt by voice (desktop continuous mode only). */
+  private listenWhileSpeaking(turn: number) {
+    if (this.opts.iosSingle || !this.active || !this.opts.isContinuous() || !this.opts.isUserSpeech) return;
+    const open = () => turn === this.turn && this.phase === "speaking";
+    const rec = this.ports.createRecognizer(
+      { continuous: true },
+      {
+        onResult: (results) => {
+          if (!open()) return;
+          const heard = results.map((r) => r.text).join(" ").trim();
+          if (heard && this.opts.isUserSpeech?.(heard, this.spoken)) {
+            this.opts.onBargeIn?.();
+            this.bargeIn();
+          }
+        },
+        onEnd: () => {
+          if (!open()) return;
+          this.rec = null;
+          this.timer = setTimeout(() => open() && this.listenWhileSpeaking(turn), this.opts.restartMs ?? 100);
+        },
+        onError: () => {},
+      },
+    );
+    if (!rec) return;
+    this.rec = rec;
+    try {
+      rec.start();
+    } catch {
+      this.rec = null; // barge-in by tap or energy still works
+    }
   }
 
   /** The user talked over the assistant: cut speech, drop the queue, listen. */

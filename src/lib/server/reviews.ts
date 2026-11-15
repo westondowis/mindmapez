@@ -1,3 +1,4 @@
+import { noteVoiceTurn } from "./voice-style";
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql, withTransaction } from "@/lib/db";
@@ -126,6 +127,7 @@ export const recordVoiceTurn = createServerFn({ method: "POST" })
         barge_ins = voice_telemetry.barge_ins + ${data.bargeIn ? 1 : 0},
         topics_json = excluded.topics_json
     `;
+    await noteVoiceTurn(sql, context.userId);
     return { ok: true as const };
   });
 
