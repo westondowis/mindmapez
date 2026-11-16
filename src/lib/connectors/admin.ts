@@ -135,7 +135,7 @@ export async function saveGrants(
     if (bad) return { ok: false as const, error: bad };
     await sql`
       update connector_grants set revoked_at = now()
-      where connector_id = ${connectorId} and user_id = ${userId} and revoked_at is null
+      where connector_id = ${connectorId} and user_id = ${userId} and revoked_at is null and via_tag_id is null
     `;
     await insertGrants(sql, userId, connectorId, grants);
     const v = await sql<{ policy_version: number }>`
@@ -207,7 +207,7 @@ export async function listConnectors(sql: Sql, userId: string): Promise<Connecto
            g.allowed_apps, g.allowed_domains, g.created_at
     from connector_grants g
     left join concepts c on c.id = g.branch_id and c.user_id = g.user_id
-    where g.user_id = ${userId} and g.revoked_at is null
+    where g.user_id = ${userId} and g.revoked_at is null and g.via_tag_id is null
     order by g.created_at
   `;
   return connectors.map((c) => ({

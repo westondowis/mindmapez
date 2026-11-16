@@ -1,4 +1,5 @@
 import { noteVoiceTurn } from "./voice-style";
+import { autoTagText, syncMemoryTags } from "@/lib/tags-core";
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql, withTransaction } from "@/lib/db";
@@ -219,7 +220,8 @@ export const approveReviewItem = createServerFn({ method: "POST" })
         const body = raw + (points.length ? "\n\nKey points:\n" + points.map((k) => "• " + k).join("\n") : "");
         const organized = organizeLocal(body, data.title);
         const title = (data.title ?? "").trim().slice(0, 120) || organized.title;
-        const tags = JSON.stringify(normalizeTags(organized.tags));
+        const tagList = await autoTagText(tx, userId, { text: raw, extraCandidates: organized.tags });
+        const tags = JSON.stringify(tagList);
         const id = newId();
 
         let posX: number | null = null;
@@ -239,6 +241,7 @@ export const approveReviewItem = createServerFn({ method: "POST" })
           values (${id}, ${userId}, ${title}, ${body}, 'voice', ${organized.emotion}, ${organized.importance}, ${organized.impact},
             ${organized.summary}, ${raw}, ${organized.kind}, ${tags}, ${posX}, ${posY})
         `;
+        await syncMemoryTags(tx, userId, id, tagList);
         if (conceptId) {
           await tx`insert into memory_concepts (user_id, memory_id, concept_id) values (${userId}, ${id}, ${conceptId}) on conflict do nothing`;
           await tx`

@@ -187,7 +187,10 @@ export function AppShell({
               { to: "/settings", label: "More", icon: Compass },
             ] as const
           ).map((item) => {
-            const active = "exact" in item && item.exact ? pathname === "/" : pathname.startsWith(item.to);
+            const active =
+              "exact" in item && item.exact
+                ? pathname === "/"
+                : pathname.startsWith(item.to) || (item.label === "More" && /^\/(tags|connectors)/.test(pathname));
             const Icon = item.icon;
             return (
               <Link

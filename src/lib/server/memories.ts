@@ -6,6 +6,8 @@ import { FREE_MEMORY_LIMIT, type MemoryDetail } from "@/lib/types";
 import { newId } from "@/lib/utils";
 import { organizeLocal } from "@/lib/organize";
 import { mergeTags, normalizeTags } from "@/lib/tags";
+import { isBlockedTag, normalizeTagName } from "@/lib/tag-intel";
+import { autoTagText, syncMemoryTags } from "@/lib/tags-core";
 import { organizeMemory, suggestTags, transcribeAudio } from "./ai";
 import { mapConcept, mapConnection, mapMemory, type MemoryRow } from "./map";
 import { ensureUserSettings } from "./seed";
@@ -133,9 +135,16 @@ export const createMemory = createServerFn({ method: "POST" })
       const title = data.title?.trim() || organized.title;
       const emotion = data.emotion || organized.emotion;
       const importance = data.importance ?? organized.importance;
-      const tags = JSON.stringify(
-        data.tags && data.tags.length ? normalizeTags(data.tags) : mergeTags(data.tags, organized.tags),
-      );
+      // Tags the user typed are kept as they are. Otherwise only words that recur across the brain
+      // (or match an existing tag / branch name) are used, never filler from a single note.
+      const tagList =
+        data.tags && data.tags.length
+          ? normalizeTags(data.tags)
+          : await autoTagText(sql, context.userId, {
+              text: raw || transcript || title,
+              extraCandidates: organized.tags,
+            });
+      const tags = JSON.stringify(tagList);
       const emoji = data.emoji?.trim() || null;
       const color = data.color?.trim() || null;
       const body = data.body?.trim() || transcript || title;
@@ -174,6 +183,8 @@ export const createMemory = createServerFn({ method: "POST" })
           ${sourceUrl}, ${sourceKind}
         )
       `;
+
+      await syncMemoryTags(sql, context.userId, id, tagList);
 
       const pinned = data.conceptId
         ? await sql<{ id: string; name: string; kind: string }>`
@@ -291,6 +302,7 @@ export const updateMemory = createServerFn({ method: "POST" })
           ai_summary = ${aiSummary}, updated_at = now()
       where id = ${data.id} and user_id = ${context.userId}
     `;
+    if (data.tags !== undefined) await syncMemoryTags(sql, context.userId, data.id, normalizeTags(data.tags));
     await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
     return { ok: true as const };
   });
@@ -433,7 +445,17 @@ export const suggestMemoryTags = createServerFn({ method: "POST" })
         }
       }
     }
-    if (!raw) return { tags: normalizeTags(existing) };
-    const tags = await suggestTags(raw, existing);
-    return { tags: mergeTags(existing, tags) };
+    // Existing filler (e.g. "regarding") is dropped unless the user pinned that exact tag.
+    const pinned = new Set(
+      (await sql<{ name: string }>`select name from tags where user_id = ${context.userId} and is_manual_override`).map((r) => r.name),
+    );
+    const kept = normalizeTags(existing).filter((t) => !isBlockedTag(t) || pinned.has(normalizeTagName(t)));
+    if (!raw) return { tags: kept };
+    const proposed = await suggestTags(raw, kept);
+    const tags = await autoTagText(sql, context.userId, {
+      text: raw,
+      extraCandidates: proposed,
+      excludeMemoryId: data.memoryId,
+    });
+    return { tags: mergeTags(kept, tags) };
   });

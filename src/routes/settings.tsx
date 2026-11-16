@@ -133,6 +133,16 @@ function SettingsPage() {
           </div>
         </section>
         <section className="mt-4 rounded-xl border border-border bg-card p-5">
+          <h2 className="font-display text-xl">Tagging system</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            See your Primary and Secondary tags, lock them into a tier by dragging, and follow a tag across every
+            sector, branch and memory it touches. Tags can also decide what a connector may read.
+          </p>
+          <Button asChild className="mt-4" variant="outline">
+            <Link to="/tags">Open tagging system</Link>
+          </Button>
+        </section>
+        <section className="mt-4 rounded-xl border border-border bg-card p-5">
           <h2 className="font-display text-xl">Connectors</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Let an AI agent or app (Gmail, a browser agent, Claude, Grok) read or add to one branch of your brain over

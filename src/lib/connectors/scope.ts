@@ -163,7 +163,8 @@ export async function listScopedMemories(
   } else {
     ownerClause = `(m.owner_branch_id in (select x.id from (${scopedConceptsSql(p)}) x)
       or (m.owner_branch_id is null and exists (
-        select 1 from connector_scope_paths($1, $2, '${perm(p)}') r where r.scope_kind = 'root')))`;
+        select 1 from connector_scope_paths($1, $2, '${perm(p)}') r where r.scope_kind = 'root'))
+      or m.id in (select connector_tag_memory_ids($1, $2, '${perm(p)}')))`;
   }
   if (opts.patterns?.length) {
     params.push(opts.patterns);

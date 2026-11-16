@@ -20,6 +20,7 @@ import { Route as ReflectRouteImport } from './routes/reflect'
 import { Route as ReviewRouteImport } from './routes/review'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as TagsRouteImport } from './routes/tags'
 import { Route as TimelineRouteImport } from './routes/timeline'
 import { Route as MemoryIdRouteImport } from './routes/memory.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -80,6 +81,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TagsRoute = TagsRouteImport.update({
+  id: '/tags',
+  path: '/tags',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TimelineRoute = TimelineRouteImport.update({
   id: '/timeline',
   path: '/timeline',
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/review': typeof ReviewRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
+  '/tags': typeof TagsRoute
   '/timeline': typeof TimelineRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/review': typeof ReviewRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
+  '/tags': typeof TagsRoute
   '/timeline': typeof TimelineRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/review': typeof ReviewRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRoute
+  '/tags': typeof TagsRoute
   '/timeline': typeof TimelineRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/review'
     | '/search'
     | '/settings'
+    | '/tags'
     | '/timeline'
     | '/memory/$id'
     | '/api/auth/$'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/review'
     | '/search'
     | '/settings'
+    | '/tags'
     | '/timeline'
     | '/memory/$id'
     | '/api/auth/$'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/review'
     | '/search'
     | '/settings'
+    | '/tags'
     | '/timeline'
     | '/memory/$id'
     | '/api/auth/$'
@@ -219,6 +231,7 @@ export interface RootRouteChildren {
   ReviewRoute: typeof ReviewRoute
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRoute
+  TagsRoute: typeof TagsRoute
   TimelineRoute: typeof TimelineRoute
   MemoryIdRoute: typeof MemoryIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -304,6 +317,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tags': {
+      id: '/tags'
+      path: '/tags'
+      fullPath: '/tags'
+      preLoaderRoute: typeof TagsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/timeline': {
       id: '/timeline'
       path: '/timeline'
@@ -347,6 +367,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReviewRoute: ReviewRoute,
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRoute,
+  TagsRoute: TagsRoute,
   TimelineRoute: TimelineRoute,
   MemoryIdRoute: MemoryIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
