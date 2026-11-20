@@ -74,6 +74,7 @@ import { DETAIL_CLOSED, centerYAbovePanel, isDoubleTap, selectDetail, toggleDeta
 import { branchUpDestination, lockBranchViewport } from "./branch-viewport";
 import { reconcileGraphNodes } from "@/lib/graph-presentation";
 import { resolveSearchTarget, type SearchTarget } from "@/lib/graph-search";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 const ME_ID = "me";
 const SECTOR_HUB = "__sector__";
@@ -1119,7 +1120,7 @@ export function MeshCanvas({
             return (
               <div className="mx-auto flex w-full max-w-md flex-wrap items-start justify-between gap-2">
                 <div className="min-w-[8rem] flex-1 rounded-xl border border-white/10 bg-black/50 px-3 py-1.5 text-white">
-                  <p className="truncate text-sm font-medium">{t.anatomy} {t.emoji}{t.renamed ? ` · ${t.short}` : ""}</p>
+                  <p className="truncate text-sm font-medium">{t.anatomy} <EmojiGlyph value={t.emoji} />{t.renamed ? ` · ${t.short}` : ""}</p>
                   {t.renamed ? <p className="truncate text-[11px] text-white/60" title={t.user}>{t.user}</p> : null}
                 </div>
                 <SectorGuide sector={sec} />

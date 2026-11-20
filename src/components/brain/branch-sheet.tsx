@@ -6,6 +6,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { BRAIN_SECTORS, childrenOf, sectorById, wouldCycle, type BrainSector } from "@/lib/brain";
 import type { Concept } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { emojiText } from "@/lib/custom-emoji";
 
 export function BranchSheet({
   branch,
@@ -111,7 +112,7 @@ export function BranchSheet({
         >
           {(sectors.length ? sectors : BRAIN_SECTORS).map((s) => (
             <option key={s.id} value={s.id}>
-              {s.emoji} {s.label}
+              {emojiText(s.emoji)} {s.label}
             </option>
           ))}
         </select>

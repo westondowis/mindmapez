@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import type { Concept } from "@/lib/types";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 /**
  * Branch details live in two parts, neither over the canvas centre:
@@ -53,7 +54,7 @@ export function BranchDetailOverlay({
           aria-label={`Show details for ${branch.name}`}
           className="pointer-events-auto absolute right-3 top-[calc(12rem+0.5rem)] flex min-h-11 max-w-[60vw] items-center gap-1.5 rounded-full border border-border bg-background/90 px-3 text-sm shadow-soft backdrop-blur-md md:top-[calc(9rem+0.5rem)]"
         >
-          <span className="truncate">{branch.emoji} {branch.name}</span>
+          <span className="truncate"><EmojiGlyph value={branch.emoji} /> {branch.name}</span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
       ) : (
@@ -74,7 +75,7 @@ export function BranchDetailOverlay({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-widest text-primary">Branch details</p>
-              <h2 className="break-words font-display text-lg">{branch.emoji} {branch.name}</h2>
+              <h2 className="break-words font-display text-lg"><EmojiGlyph value={branch.emoji} /> {branch.name}</h2>
             </div>
             <div className="flex shrink-0 gap-1">
               <button type="button" onClick={onToggle} aria-expanded aria-label="Collapse branch details" className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground">

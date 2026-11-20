@@ -18,6 +18,7 @@ import { primaryBranches, SECTOR_INSIGHT, sectorTitle, type BrainSector, type Br
 import type { Concept } from "@/lib/types";
 import { canvasNdc, owningSector, brainIntersections } from "@/lib/brain-picking";
 import { BRAIN_BUILD, createBrainMaterial } from "./brain-material";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 const MIN_DIST = 1.35;
 const MAX_DIST = 7.5;
@@ -670,7 +671,7 @@ export function BrainOverview({
                   : "border-violet-400/45 bg-black/65 shadow-[0_0_14px_rgba(168,85,247,0.4)]"
               }`}
             >
-              {(() => { const t = sectorTitle(sector); return t.renamed ? `${t.anatomy} ${t.emoji} ${t.short}` : `${t.anatomy} ${t.emoji}`; })()}
+              {(() => { const t = sectorTitle(sector); return <>{t.anatomy} <EmojiGlyph value={t.emoji} />{t.renamed ? ` ${t.short}` : null}</>; })()}
             </button>
           );
         })}
@@ -711,7 +712,7 @@ export function BrainOverview({
               onPointerEnter={() => setHovered(sector.id)}
               className={`pointer-events-auto shrink-0 rounded-full px-2.5 py-1.5 text-[11px] ${hovered === sector.id ? "bg-[#6a2ca8] text-white" : "bg-black/55 text-white/85"}`}
             >
-              {(() => { const t = sectorTitle(sector); return t.renamed ? `${t.anatomy} ${t.emoji} ${t.short}` : `${t.anatomy} ${t.emoji}`; })()}
+              {(() => { const t = sectorTitle(sector); return <>{t.anatomy} <EmojiGlyph value={t.emoji} />{t.renamed ? ` ${t.short}` : null}</>; })()}
             </button>
           ))}
         </div>
