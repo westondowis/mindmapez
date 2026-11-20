@@ -71,7 +71,7 @@ describe("state transitions", () => {
     assert.equal(h.recs.length, 2, "a fresh recognizer is created, never reused");
   });
 
-  it("iOS uses single-utterance sessions and needs a tap to continue", async () => {
+  it("iOS uses single-utterance sessions; continuous re-opens itself and falls back to a tap if refused", async () => {
     const h = harness({ ios: true, continuous: true });
     h.session.start();
     assert.equal(h.recs[0]!.opts.continuous, false);
@@ -79,7 +79,9 @@ describe("state transitions", () => {
     h.last().onEnd(); // engine-confirmed end of the utterance
     await h.flush();
     h.speak().onEnd();
-    assert.equal(h.session.phase, "idle");
+    assert.equal(h.session.phase, "listening"); // re-opened without a tap
+    h.last().onError("not-allowed"); // iOS refused a start outside a gesture
+    assert.equal(h.session.phase, "idle"); // "Tap to continue", not an error
     h.session.tap();
     assert.equal(h.session.phase, "listening");
   });

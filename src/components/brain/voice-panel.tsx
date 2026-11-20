@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { askAssistant, voiceIngest } from "@/lib/server/assistant";
 import { listReviews, queueReview, recordVoiceTurn } from "@/lib/server/reviews";
-import { RECOGNIZER_RESTART_MS, SILENT_WAV, VAD_SILENCE_MS, isEchoOf, preferRecognitionOnly } from "@/lib/voice";
+import { RECOGNIZER_GAP_MS, RECOGNIZER_RESTART_MS, SILENT_WAV, VAD_SILENCE_MS, isEchoOf, preferRecognitionOnly } from "@/lib/voice";
 import { createTurnProcessor } from "@/lib/voice-ingest";
 import { startEnergyMonitor } from "@/lib/voice-energy";
 import { VoiceSession, type Phase, type Recognizer, type RecognizerEvents } from "@/lib/voice-session";
@@ -129,6 +129,7 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
         {
           silenceMs: VAD_SILENCE_MS,
           restartMs: RECOGNIZER_RESTART_MS,
+          gapMs: RECOGNIZER_GAP_MS,
           isUserSpeech: (heard, spoken) => !isEchoOf(heard, spoken),
           onBargeIn: () => { bargedIn.current = true; },
           iosSingle,

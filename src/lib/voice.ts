@@ -55,7 +55,9 @@ export function verbosityHint(t: { turns: number; bargeIns: number; topics: stri
 }
 
 /** Silence after the last recognised speech before a thought is dispatched; partials re-arm it. */
-export const VAD_SILENCE_MS = 1000;
+export const VAD_SILENCE_MS = 1500;
+/** Cool-down after aborting a recognizer before the next may start (a start racing an abort fails in Chrome). */
+export const RECOGNIZER_GAP_MS = 250;
 /** Pause before a recognizer that ended on its own is started again in continuous mode. */
 export const RECOGNIZER_RESTART_MS = 100;
 /** Distil the voice style profile every this many voice turns. */

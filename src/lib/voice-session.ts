@@ -31,8 +31,16 @@ export type SessionPorts = {
 export type SessionOptions = {
   /** Quiet time after speech before a desktop thought is sent. */
   silenceMs: number;
-  /** Pause before a recognizer that ended with nothing heard is restarted in continuous mode. */
+  /**
+   * Enables hold-and-continue: a recognizer that ends by itself (browsers end them after a short
+   * pause) never sends the thought; a fresh one starts after this many ms and the thought is sent
+   * only after `silenceMs` of real quiet. Leave undefined for the old end-means-send behaviour.
+   */
   restartMs?: number;
+  /** Cool-down after a recognizer is aborted before the next one may start (browsers fail a start that races an abort). */
+  gapMs?: number;
+  /** Restarts allowed in a row with nothing heard before the session gives up and idles. */
+  maxIdleRestarts?: number;
   /** Decides whether text heard while the assistant speaks is the user (true) or the speaker's own echo (false). */
   isUserSpeech?: (heard: string, spoken: string) => boolean;
   /** Fired when the user talks over the assistant. */
@@ -53,8 +61,17 @@ export class VoiceSession {
   private active = false;
   private rec: Recognizer | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private coolTimer: ReturnType<typeof setTimeout> | null = null;
+  private cooling = false;
+  private pendingOpen: (() => void) | null = null;
   private final = "";
   private interim = "";
+  /** Text kept from recognizers that ended earlier in the same thought. */
+  private carry = "";
+  private idleRestarts = 0;
+  /** True when this turn was opened without a tap (continuous mode); a blocked mic then falls back to idle, not an error. */
+  private autoOpened = false;
   private spoken = "";
 
   private ports: SessionPorts;
@@ -76,64 +93,96 @@ export class VoiceSession {
     this.timer = null;
   }
 
+  private clearRestart() {
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
+  }
+
   private teardownRecognizer() {
     this.clearTimer();
+    this.clearRestart();
+    this.pendingOpen = null;
     const rec = this.rec;
     this.rec = null;
-    try { rec?.abort(); } catch { /* already ended */ }
+    if (!rec) return;
+    try { rec.abort(); } catch { /* already ended */ }
+    const gap = this.opts.gapMs ?? 0;
+    if (gap > 0) {
+      this.cooling = true;
+      if (this.coolTimer) clearTimeout(this.coolTimer);
+      this.coolTimer = setTimeout(() => {
+        this.coolTimer = null;
+        this.cooling = false;
+        const open = this.pendingOpen;
+        this.pendingOpen = null;
+        open?.();
+      }, gap);
+    }
+  }
+
+  /** Run `open` now, or as soon as the previous recognizer's cool-down is over. */
+  private whenReady(open: () => void) {
+    if (!this.cooling) return open();
+    this.pendingOpen = open;
+  }
+
+  private holding() {
+    return this.opts.restartMs !== undefined && this.active;
   }
 
   private text() {
     return `${this.final} ${this.interim}`.trim();
   }
 
-  /** Begin one listening turn. Call synchronously from a tap on iOS. */
-  start() {
+  /** Begin one listening turn. Call synchronously from a tap on iOS (auto = continuous re-open without a tap). */
+  start(auto = false) {
     if (this.phase === "thinking" || this.phase === "speaking") return;
     this.teardownRecognizer();
     const gen = ++this.gen;
     this.final = "";
     this.interim = "";
+    this.carry = "";
+    this.idleRestarts = 0;
+    this.autoOpened = auto;
+    this.active = true;
+    this.setPhase("listening");
+    this.whenReady(() => this.openRecognizer(gen));
+  }
+
+  /** Create and start one recognizer for the current thought (also used to continue it after an end). */
+  private openRecognizer(gen: number) {
+    if (gen !== this.gen || this.phase !== "listening") return;
     const live = () => gen === this.gen && this.phase === "listening";
     const rec = this.ports.createRecognizer(
       { continuous: !this.opts.iosSingle },
       {
         onResult: (results) => {
           if (!live()) return;
-          this.final = results.filter((r) => r.final).map((r) => r.text).join(" ").trim();
+          const finals = results.filter((r) => r.final).map((r) => r.text);
+          this.final = [this.carry, ...finals].join(" ").trim();
           this.interim = results.filter((r) => !r.final).map((r) => r.text).join(" ").trim();
           const t = this.text();
+          if (t) this.idleRestarts = 0;
           this.opts.onLine?.(t);
           // Only a full silence window of quiet ends the thought; partials just re-arm the timer.
           this.clearTimer();
           if (t) this.timer = setTimeout(() => live() && this.commit(), this.opts.silenceMs);
         },
         onEnd: () => {
-          if (!live()) return;
-          this.clearTimer();
-          const t = this.text();
-          if (t) return this.commit();
-          // Continuous mode keeps the mic live: start a fresh recognizer (ended ones are never reused).
-          if (this.active && this.opts.isContinuous() && !this.opts.iosSingle && this.opts.restartMs !== undefined) {
-            this.gen++;
-            this.teardownRecognizer();
-            const g = this.gen;
-            this.timer = setTimeout(() => {
-              this.timer = null;
-              if (g === this.gen && this.active && this.phase === "listening") this.start();
-            }, this.opts.restartMs);
-            return;
-          }
-          this.toIdle(); // empty transcript: never thinking, never an API call
+          if (live()) this.ended(gen);
         },
         onError: (code) => {
           if (!live()) return;
           if (code === "not-allowed" || code === "service-not-allowed") {
             this.teardownRecognizer();
+            if (this.autoOpened) return this.toIdle(); // a restart without a tap was refused: "Tap to continue"
             this.opts.onReply?.("Microphone access was blocked. Allow it in Settings and tap again.");
             this.setPhase("error");
             return;
           }
+          // Benign endings (nothing heard, aborted by a racing start) continue the thought when holding.
+          if ((code === "no-speech" || code === "aborted") && this.holding()) return this.ended(gen);
+          this.clearTimer();
           if (this.text()) this.commit();
           else this.toIdle();
         },
@@ -145,14 +194,43 @@ export class VoiceSession {
       return;
     }
     this.rec = rec;
-    this.active = true;
-    this.setPhase("listening");
     try {
       rec.start();
     } catch {
-      // Blocked (e.g. a programmatic restart outside a gesture): wait for the next tap.
-      this.toIdle();
+      // Blocked or racing: keep what was said, otherwise wait for the next tap.
+      this.rec = null;
+      if (this.text()) this.commit();
+      else this.toIdle();
     }
+  }
+
+  /**
+   * The browser ended its recognizer (it does after a short pause, or after one utterance on iOS).
+   * While holding, that is NOT the end of the thought: keep the text, start a fresh recognizer, and let
+   * the silence timer (armed at the last words) decide when to send.
+   */
+  private ended(gen: number) {
+    const t = this.text();
+    const keepGoing = this.holding() && (t !== "" || (this.opts.isContinuous() && this.idleRestarts < (this.opts.maxIdleRestarts ?? 6)));
+    if (!keepGoing) {
+      this.clearTimer();
+      if (t) this.commit();
+      else this.toIdle(); // empty transcript: never thinking, never an API call
+      return;
+    }
+    if (!t) this.idleRestarts++;
+    this.carry = t;
+    this.final = t;
+    this.interim = "";
+    const rec = this.rec;
+    this.rec = null;
+    try { rec?.abort(); } catch { /* already ended */ }
+    this.clearRestart();
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (gen !== this.gen || this.phase !== "listening") return;
+      this.whenReady(() => this.openRecognizer(gen));
+    }, this.opts.restartMs ?? 100);
   }
 
   private toIdle() {
@@ -202,9 +280,9 @@ export class VoiceSession {
       finished = true;
       this.teardownRecognizer();
       this.opts.onSpeaking?.(false);
-      if (!isError && this.active && this.opts.isContinuous() && !this.opts.iosSingle) {
+      if (!isError && this.active && this.opts.isContinuous()) {
         this.setPhase("idle");
-        this.start();
+        this.start(this.opts.iosSingle);
       } else {
         this.setPhase("idle");
       }
@@ -224,46 +302,60 @@ export class VoiceSession {
     });
   }
 
-  /** Keep the mic live while speaking so the user can interrupt by voice (desktop continuous mode only). */
+  /** Keep the mic live while speaking so the user can interrupt by voice (not on iOS, where the mic and TTS share one audio route). */
   private listenWhileSpeaking(turn: number) {
     if (this.opts.iosSingle || !this.active || !this.opts.isContinuous() || !this.opts.isUserSpeech) return;
-    const open = () => turn === this.turn && this.phase === "speaking";
-    const rec = this.ports.createRecognizer(
-      { continuous: true },
-      {
-        onResult: (results) => {
-          if (!open()) return;
-          const heard = results.map((r) => r.text).join(" ").trim();
-          if (heard && this.opts.isUserSpeech?.(heard, this.spoken)) {
-            this.opts.onBargeIn?.();
-            this.bargeIn();
-          }
+    const open = () => turn === this.turn && this.phase === "speaking" && this.active;
+    const launch = () => {
+      if (!open()) return;
+      const rec = this.ports.createRecognizer(
+        { continuous: true },
+        {
+          onResult: (results) => {
+            if (!open()) return;
+            const heard = results.map((r) => r.text).join(" ").trim();
+            if (heard && this.opts.isUserSpeech?.(heard, this.spoken)) {
+              this.opts.onBargeIn?.();
+              this.bargeIn(heard); // the words that interrupted stay part of the new thought
+            }
+          },
+          onEnd: () => {
+            if (!open()) return;
+            this.rec = null;
+            this.clearRestart();
+            this.restartTimer = setTimeout(() => {
+              this.restartTimer = null;
+              this.whenReady(launch);
+            }, this.opts.restartMs ?? 100);
+          },
+          onError: () => {},
         },
-        onEnd: () => {
-          if (!open()) return;
-          this.rec = null;
-          this.timer = setTimeout(() => open() && this.listenWhileSpeaking(turn), this.opts.restartMs ?? 100);
-        },
-        onError: () => {},
-      },
-    );
-    if (!rec) return;
-    this.rec = rec;
-    try {
-      rec.start();
-    } catch {
-      this.rec = null; // barge-in by tap or energy still works
-    }
+      );
+      if (!rec) return;
+      this.rec = rec;
+      try {
+        rec.start();
+      } catch {
+        this.rec = null; // barge-in by tap or energy still works
+      }
+    };
+    this.whenReady(launch);
   }
 
-  /** The user talked over the assistant: cut speech, drop the queue, listen. */
-  bargeIn() {
+  /** The user talked over the assistant: cut speech, drop the queue, listen (seeded with what they already said). */
+  bargeIn(seed = "") {
     if (this.phase !== "speaking") return;
     this.turn++;
     this.ports.cancelSpeech();
     this.opts.onSpeaking?.(false);
     this.setPhase("idle");
     this.start();
+    if (seed) {
+      this.carry = seed;
+      this.final = seed;
+      this.opts.onLine?.(seed);
+      this.timer = setTimeout(() => this.phase === "listening" && this.commit(), this.opts.silenceMs);
+    }
   }
 
   /** Close the session: stop everything and return to idle. */
