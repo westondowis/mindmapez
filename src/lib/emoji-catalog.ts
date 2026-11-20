@@ -1,3 +1,6 @@
+import { parseEmojiRows, type EmojiEntry } from "./emoji-search";
+
+/** Hand-picked starter sets (the original picker), shown together as the "Quick" tab. */
 export type EmojiGroup = {
   id: string;
   label: string;
@@ -77,34 +80,19 @@ export const EMOJI_GROUPS: EmojiGroup[] = [
   },
 ];
 
-export const ALL_EMOJI = EMOJI_GROUPS.flatMap((g) => g.glyphs);
+/** Every curated glyph once, in curated order: the picker's default "Quick" tab. */
+export const QUICK_PICKS: string[] = [...new Set(EMOJI_GROUPS.flatMap((g) => g.glyphs))];
 
-const KEYWORDS: Record<string, string[]> = {
-  golf: ["⛳", "🏌️"],
-  house: ["🏠", "🏡"],
-  home: ["🏠", "🏡", "🔑"],
-  money: ["💰", "💵", "💳"],
-  work: ["💼", "💻", "📊"],
-  family: ["👨‍👩‍👧", "🫂", "🏠"],
-  health: ["❤️", "💪", "🧘"],
-  idea: ["💡", "✨", "🧠"],
-  travel: ["✈️", "🧳", "🗺️"],
-  love: ["❤️", "💛", "🫂"],
-};
+let library: Promise<EmojiEntry[]> | null = null;
 
-export function searchEmoji(query: string): string[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return ALL_EMOJI;
-  const hits = new Set<string>();
-  for (const [word, glyphs] of Object.entries(KEYWORDS)) {
-    if (word.includes(q) || q.includes(word)) {
-      for (const g of glyphs) hits.add(g);
-    }
-  }
-  for (const group of EMOJI_GROUPS) {
-    if (group.label.toLowerCase().includes(q) || group.id.includes(q)) {
-      for (const g of group.glyphs) hits.add(g);
-    }
-  }
-  return hits.size ? [...hits] : ALL_EMOJI;
+/**
+ * The full Unicode library (~1,900 emoji, ~18 KB gzipped) lives in its own
+ * chunk and loads the first time a picker opens.
+ */
+export function loadEmojiLibrary(): Promise<EmojiEntry[]> {
+  library ??= import("./emoji-data").then((m) => parseEmojiRows(m.EMOJI_ROWS)).catch((err) => {
+    library = null;
+    throw err;
+  });
+  return library;
 }
