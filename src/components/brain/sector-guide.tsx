@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { SECTOR_INSIGHT, sectorTitle, type BrainSector } from "@/lib/brain";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 export function SectorGuide({ sector }: { sector: BrainSector }) {
   const [open, setOpen] = useState(false);
@@ -10,7 +11,7 @@ export function SectorGuide({ sector }: { sector: BrainSector }) {
   if (!named) {
     return (
       <div className="mx-auto w-full max-w-md rounded-2xl border border-[#6a2ca8]/40 bg-black/75 p-3 text-white backdrop-blur-md">
-        <p className="text-sm font-medium">{title.anatomy} {title.emoji}</p>
+        <p className="text-sm font-medium">{title.anatomy} <EmojiGlyph value={title.emoji} /></p>
         <p className="mt-0.5 text-[11px] text-[#c9b6ff]">{insight.handles}</p>
         <p className="mt-1.5 text-[11px] text-white/70">Ways you might use it:</p>
         <ul className="mt-1 space-y-0.5 text-[11px] text-white/80">
@@ -36,7 +37,7 @@ export function SectorGuide({ sector }: { sector: BrainSector }) {
       {open ? (
         <div className="absolute right-0 z-40 mt-1 w-72 rounded-xl border border-[#6a2ca8]/40 bg-black/90 p-3 text-white shadow-lg">
           <div className="flex items-start justify-between gap-2">
-            <p className="text-sm font-medium">{title.anatomy} {title.emoji}</p>
+            <p className="text-sm font-medium">{title.anatomy} <EmojiGlyph value={title.emoji} /></p>
             <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="text-white/60">✕</button>
           </div>
           <p className="mt-0.5 text-[11px] text-[#c9b6ff]">{insight.handles}</p>

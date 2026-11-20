@@ -5,6 +5,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { formatElapsed, useRecorder } from "@/lib/use-recorder";
 import type { Memory } from "@/lib/types";
 import { blobToDataUrl, cn } from "@/lib/utils";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 export function RecordDock({
   pathLabel,
@@ -143,7 +144,7 @@ export function RecordDock({
               tab === m.id ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground/80",
             )}
           >
-            {m.emoji ? `${m.emoji} ` : ""}
+            {m.emoji ? <><EmojiGlyph value={m.emoji} />{" "}</> : null}
             {m.title}
           </button>
         ))}
