@@ -8,6 +8,7 @@ import { SYNAPSE_LEAD, SYNAPSE_PITCH, synapseLayout } from "@/lib/synapse";
 import { BRANCH_RADIUS, MEMORY_BOX, pointOnRing, type MemoryRoute } from "@/lib/synapse-route";
 import type { NodeKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 export type MeNodeData = { label: string; selected?: boolean };
 export type SectorNodeData = { label: string; kicker: string; selected?: boolean };
@@ -122,7 +123,7 @@ export function ConceptNode({ data }: NodeProps) {
           outlineOffset: "2px",
         }}
       >
-        {d.emoji ? <span className="text-2xl leading-none">{d.emoji}</span> : Icon ? <Icon className="size-6" /> : null}
+        {d.emoji ? <EmojiGlyph value={d.emoji} className="text-2xl leading-none" /> : Icon ? <Icon className="size-6" /> : null}
       </div>
       <div className="mt-2 h-9 w-28 text-center">
         <div className="truncate text-xs font-medium text-foreground">{d.name}</div>
@@ -384,7 +385,7 @@ export function MemoryNode({ data }: NodeProps) {
         <RoutedSynapse route={d.route} ringCenter={d.ringCenter} glow={d.glow || d.recent || true} />
         {d.emoji ? (
           <span className="absolute text-[10px] leading-none" style={{ left: somaX - 5, top: somaY - 5, color }}>
-            {d.emoji}
+            <EmojiGlyph value={d.emoji} />
           </span>
         ) : null}
         <div className={cn("absolute rounded-full", d.recent && "animate-node-pulse")} style={{ left: somaX - 16, top: somaY - 16, width: 32, height: 32 }} />
@@ -420,7 +421,7 @@ export function MemoryNode({ data }: NodeProps) {
         <SynapseMark glow={d.glow || d.recent || true} chars={d.contentLength} />
         {d.emoji ? (
           <span className="absolute left-[18px] top-[16px] text-[11px] leading-none" style={{ color }}>
-            {d.emoji}
+            <EmojiGlyph value={d.emoji} />
           </span>
         ) : null}
       </div>

@@ -29,6 +29,7 @@ import {
   type ConnectorTreeNode,
 } from "@/lib/server/connectors";
 import { cn, formatRelative } from "@/lib/utils";
+import { EmojiGlyph } from "@/components/emoji-glyph";
 
 export const Route = createFileRoute("/connectors")({ component: ConnectorsRoute });
 
@@ -530,7 +531,7 @@ function ScopePicker({
               {kids ? (isOpen ? "▾" : "▸") : ""}
             </button>
             <button type="button" className={row("branch", n.id)} onClick={() => pick("branch", n.id)}>
-              {n.emoji ? `${n.emoji} ` : ""}
+              {n.emoji ? <><EmojiGlyph value={n.emoji} />{" "}</> : null}
               {n.name}
             </button>
           </div>
@@ -594,7 +595,7 @@ function ScopePicker({
                         {kids ? (isOpen ? "▾" : "▸") : ""}
                       </button>
                       <button type="button" className={row("sector", s.id)} onClick={() => pick("sector", s.id)}>
-                        {s.emoji} {s.label}
+                        <EmojiGlyph value={s.emoji} /> {s.label}
                       </button>
                     </div>
                     {kids && isOpen ? <ul>{renderBranches(key, 1)}</ul> : null}

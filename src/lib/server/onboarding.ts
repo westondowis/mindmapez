@@ -5,6 +5,7 @@ import { getSql } from "@/lib/db";
 import { NODE_COLORS } from "@/lib/node-colors";
 import { newId } from "@/lib/utils";
 import { ensureUserSettings } from "./seed";
+import { normalizeEmojiValue } from "@/lib/custom-emoji";
 
 export type WalkthroughMap = {
   name: string;
@@ -26,7 +27,7 @@ export const startWalkthrough = createServerFn({ method: "POST" })
     const maps = input.maps
       .map((m) => ({
         name: m.name.trim(),
-        emoji: (m.emoji || "🧠").slice(0, 8),
+        emoji: normalizeEmojiValue(m.emoji, "🧠"),
         color: NODE_COLORS.some((c) => c.id === m.color) ? m.color : "cyan",
       }))
       .filter((m) => m.name.length > 0)

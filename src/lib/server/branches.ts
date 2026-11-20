@@ -6,6 +6,7 @@ import { newId } from "@/lib/utils";
 import { mapConcept, type ConceptRow } from "./map";
 import { ensureUserSettings } from "./seed";
 import { newBranchPosition } from "@/lib/branch-memories";
+import { normalizeEmojiValue } from "@/lib/custom-emoji";
 
 async function loadUserConcepts(userId: string) {
   const sql = await getSql();
@@ -331,7 +332,7 @@ export const saveBrainSectors = createServerFn({ method: "POST" })
         if (label.length > 32) return { ok: false as const, error: "Keep main branch names under 32 characters." };
         sector.label = label;
         sector.kicker = incoming.kicker.trim().slice(0, 48) || sector.kicker;
-        sector.emoji = incoming.emoji.trim().slice(0, 8) || sector.emoji;
+        sector.emoji = normalizeEmojiValue(incoming.emoji, sector.emoji);
         sector.color = incoming.color.trim() || sector.color;
       }
     }
