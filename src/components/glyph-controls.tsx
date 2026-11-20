@@ -129,8 +129,8 @@ function EmojiSheet({ value, onPick, onClose }: { value: string; onPick: (v: str
       onDoubleClick={stopBubble}
       onKeyDown={stopBubble}
     >
-      <button type="button" aria-label="Close icon picker" className="absolute inset-0 bg-black/45" onClick={onClose} />
-      <div className="clear-bottom-nav absolute inset-x-0 flex max-h-[min(80dvh,38rem)] flex-col rounded-t-2xl border border-border bg-popover p-3 shadow-soft md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:max-h-[min(86dvh,40rem)] md:w-[26rem] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-2xl">
+      <button type="button" aria-label="Close icon picker" className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="clear-bottom-nav absolute inset-x-0 flex max-h-[min(80dvh,38rem)] flex-col rounded-t-2xl border border-border bg-background/95 p-3 shadow-soft backdrop-blur-md md:inset-x-auto md:bottom-auto md:left-1/2 md:top-1/2 md:max-h-[min(86dvh,40rem)] md:w-[26rem] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-2xl">
         <div className="flex items-center gap-2">
           <Input
             placeholder={tab === "create" ? "Search icons…" : "Search all emoji…"}
