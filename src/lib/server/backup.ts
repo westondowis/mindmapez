@@ -3,12 +3,16 @@ import {
   parseMindBackup,
   summarizeBackup,
   type BackupConcept,
+  type BackupDataset,
   type BackupMemory,
   type MindBackup,
 } from "@/lib/backup";
 import { normalizeSectorId } from "@/lib/brain";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
+import { DIGEST_ARCHETYPES, type DigestArchetype } from "@/lib/digestion/detect";
+import { restoreDatasetCore, SOURCE_FORMATS, type SourceFormat } from "@/lib/digestion/store";
+import type { JsonObject, ViewerType } from "@/lib/digestion/viewer-types";
 import { newId } from "@/lib/utils";
 import { ensureUserSettings } from "./seed";
 
@@ -60,7 +64,21 @@ type MemoryDump = {
   source_kind: string | null;
   created_at: string;
   updated_at: string;
+  viewer_type: string | null;
+  extracted_metadata_json: JsonObject | string | null;
+  artifact_state_json: JsonObject | string | null;
+  thumb_data_url: string | null;
 };
+
+function jsonCol(v: JsonObject | string | null): JsonObject | null {
+  if (v == null) return null;
+  if (typeof v !== "string") return v;
+  try {
+    return JSON.parse(v) as JsonObject;
+  } catch {
+    return null;
+  }
+}
 
 async function wipeUserMind(userId: string) {
   const sql = await getSql();
@@ -109,6 +127,9 @@ function remapIds(backup: MindBackup) {
       })
       .filter((c): c is NonNullable<typeof c> => Boolean(c)),
     assistantMessages: backup.assistantMessages.map((m) => ({ ...m, id: newId() })),
+    datasets: backup.datasets
+      .map((d) => ({ ...d, memoryId: memoryMap.get(d.memoryId) ?? "" }))
+      .filter((d): d is BackupDataset => Boolean(d.memoryId)),
   };
 }
 
@@ -129,9 +150,29 @@ export const exportMind = createServerFn({ method: "GET" })
     const memories = await sql<MemoryDump>`
       select id, title, body, memory_type, emotion, importance, ai_impact, ai_summary, transcript,
              media_url, media_mime, media_name, node_kind, tags_json, access_count, position_x, position_y,
-             emoji, color, source_url, source_kind, created_at, updated_at
+             emoji, color, source_url, source_kind, created_at, updated_at,
+             viewer_type, extracted_metadata_json, artifact_state_json, thumb_data_url
       from memories where user_id = ${context.userId}
     `;
+    const datasetRows = await sql<{ id: string; memory_id: string; archetype: string; source_filename: string; source_format: string; schema_json: JsonObject | string }>`
+      select id, memory_id, archetype, source_filename, source_format, schema_json
+      from digested_datasets where user_id = ${context.userId} and status = 'ready'
+    `;
+    const datasets: BackupDataset[] = [];
+    for (const d of datasetRows) {
+      const rows = await sql<{ canonical_json: JsonObject; custom_fields_json: JsonObject }>`
+        select canonical_json, custom_fields_json from digested_rows
+        where dataset_id = ${d.id} and user_id = ${context.userId} order by row_index
+      `;
+      datasets.push({
+        memoryId: d.memory_id,
+        archetype: d.archetype,
+        sourceFilename: d.source_filename,
+        sourceFormat: d.source_format,
+        schema: jsonCol(d.schema_json) ?? {},
+        rows: rows.map((r) => ({ canonical: jsonCol(r.canonical_json) ?? {}, custom: jsonCol(r.custom_fields_json) ?? {} })),
+      });
+    }
     const links = await sql<{ memory_id: string; concept_id: string }>`
       select memory_id, concept_id from memory_concepts where user_id = ${context.userId}
     `;
@@ -161,7 +202,7 @@ export const exportMind = createServerFn({ method: "GET" })
     const s = settings[0];
     return {
       format: "mindmesh-backup",
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       settings: {
         displayName: s?.display_name?.trim() || "",
@@ -217,6 +258,10 @@ export const exportMind = createServerFn({ method: "GET" })
           sourceKind: m.source_kind,
           createdAt: m.created_at,
           updatedAt: m.updated_at,
+          viewerType: (m.viewer_type ?? "plain") as ViewerType,
+          extractedMetadata: jsonCol(m.extracted_metadata_json),
+          artifactState: jsonCol(m.artifact_state_json),
+          thumbDataUrl: m.thumb_data_url,
         };
       }),
       memoryConcepts: links.map((l) => ({ memoryId: l.memory_id, conceptId: l.concept_id })),
@@ -237,6 +282,7 @@ export const exportMind = createServerFn({ method: "GET" })
         content: m.content,
         createdAt: m.created_at,
       })),
+      datasets,
       draftJson,
     };
   });
@@ -272,15 +318,36 @@ export const importMind = createServerFn({ method: "POST" })
         insert into memories (
           id, user_id, title, body, memory_type, emotion, importance, ai_impact, ai_summary,
           transcript, media_url, media_mime, media_name, node_kind, tags_json, access_count,
-          position_x, position_y, emoji, color, source_url, source_kind, created_at, updated_at
+          position_x, position_y, emoji, color, source_url, source_kind, created_at, updated_at,
+          viewer_type, extracted_metadata_json, artifact_state_json, thumb_data_url
         ) values (
           ${m.id}, ${context.userId}, ${m.title}, ${m.body}, ${m.memoryType}, ${m.emotion},
           ${m.importance}, ${m.aiImpact}, ${m.aiSummary}, ${m.transcript}, ${m.mediaUrl},
           ${m.mediaMime}, ${m.mediaName}, ${m.nodeKind}, ${JSON.stringify(m.tags)}, ${m.accessCount},
           ${m.positionX}, ${m.positionY}, ${m.emoji}, ${m.color}, ${m.sourceUrl}, ${m.sourceKind},
-          ${m.createdAt}, ${m.updatedAt}
+          ${m.createdAt}, ${m.updatedAt},
+          ${m.viewerType}, ${m.extractedMetadata ? JSON.stringify(m.extractedMetadata) : null}::jsonb,
+          ${m.artifactState ? JSON.stringify(m.artifactState) : null}::jsonb, ${m.thumbDataUrl}
         )
       `;
+    }
+
+    let datasetsSkipped = 0;
+    for (const d of remapped.datasets) {
+      if (!DIGEST_ARCHETYPES.includes(d.archetype as DigestArchetype) || !SOURCE_FORMATS.includes(d.sourceFormat as SourceFormat)) {
+        datasetsSkipped += 1;
+        continue;
+      }
+      try {
+        await restoreDatasetCore(
+          sql,
+          context.userId,
+          { memoryId: d.memoryId, archetype: d.archetype as DigestArchetype, sourceFilename: d.sourceFilename, sourceFormat: d.sourceFormat as SourceFormat, schema: d.schema, rows: d.rows },
+          newId,
+        );
+      } catch {
+        datasetsSkipped += 1;
+      }
     }
 
     for (const l of remapped.memoryConcepts) {
@@ -331,5 +398,5 @@ export const importMind = createServerFn({ method: "POST" })
       where user_id = ${context.userId}
     `;
 
-    return { ok: true as const, summary: summarizeBackup(parsed.backup) };
+    return { ok: true as const, summary: summarizeBackup(parsed.backup), datasetsSkipped };
   });

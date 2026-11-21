@@ -1,5 +1,8 @@
+import { isViewerType, validateViewerFields, type JsonObject, type ViewerType } from "./digestion/viewer-types.ts";
+
 export const BACKUP_FORMAT = "mindmesh-backup";
-export const BACKUP_VERSION = 1;
+/** v2 (v5.35) adds viewer columns on memories and digested datasets; v1 files still restore. */
+export const BACKUP_VERSION = 2;
 
 export type BackupSettings = {
   displayName: string;
@@ -49,6 +52,19 @@ export type BackupMemory = {
   sourceKind: string | null;
   createdAt: string;
   updatedAt: string;
+  viewerType: ViewerType;
+  extractedMetadata: JsonObject | null;
+  artifactState: JsonObject | null;
+  thumbDataUrl: string | null;
+};
+
+export type BackupDataset = {
+  memoryId: string;
+  archetype: string;
+  sourceFilename: string;
+  sourceFormat: string;
+  schema: JsonObject;
+  rows: { canonical: JsonObject; custom: JsonObject }[];
 };
 
 export type BackupLink = {
@@ -85,6 +101,7 @@ export type MindBackup = {
   memoryConcepts: BackupLink[];
   connections: BackupConnection[];
   assistantMessages: BackupAssistantMessage[];
+  datasets: BackupDataset[];
   draftJson: string | null;
 };
 
@@ -132,6 +149,40 @@ function asIso(v: unknown): string {
   const s = asString(v);
   const d = Date.parse(s);
   return Number.isFinite(d) ? new Date(d).toISOString() : new Date().toISOString();
+}
+
+function asObject(v: unknown): JsonObject | null {
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as JsonObject) : null;
+}
+
+/** Viewer fields from a backup row; anything invalid or over its cap falls back to a plain memory. */
+function viewerFields(m: Record<string, unknown>): Pick<BackupMemory, "viewerType" | "extractedMetadata" | "artifactState" | "thumbDataUrl"> {
+  const rawType = m.viewerType ?? m.viewer_type;
+  const fields = {
+    viewerType: (typeof rawType === "string" && isViewerType(rawType) ? rawType : "plain") as ViewerType,
+    extractedMetadata: asObject(m.extractedMetadata ?? m.extracted_metadata_json),
+    artifactState: asObject(m.artifactState ?? m.artifact_state_json),
+    thumbDataUrl: asNullableString(m.thumbDataUrl ?? m.thumb_data_url),
+  };
+  try {
+    validateViewerFields(fields);
+    return fields;
+  } catch {
+    let thumb: string | null = fields.thumbDataUrl;
+    try {
+      validateViewerFields({ viewerType: "plain", thumbDataUrl: thumb });
+    } catch {
+      thumb = null;
+    }
+    return { viewerType: "plain", extractedMetadata: null, artifactState: null, thumbDataUrl: thumb };
+  }
 }
 
 function asTags(v: unknown): string[] {
@@ -230,6 +281,7 @@ export function parseMindBackup(raw: unknown): { ok: true; backup: MindBackup } 
       sourceKind: asNullableString(m.sourceKind ?? m.source_kind),
       createdAt: asIso(m.createdAt ?? m.created_at),
       updatedAt: asIso(m.updatedAt ?? m.updated_at),
+      ...viewerFields(m),
     });
   }
 
@@ -286,6 +338,30 @@ export function parseMindBackup(raw: unknown): { ok: true; backup: MindBackup } 
     });
   }
 
+  const datasetsRaw = Array.isArray(o.datasets) ? o.datasets : [];
+  if (datasetsRaw.length > 2000) return { ok: false, error: "Too many datasets in this backup." };
+  const datasets: BackupDataset[] = [];
+  const seenDatasetMemory = new Set<string>();
+  for (const row of datasetsRaw) {
+    if (!row || typeof row !== "object") continue;
+    const d = row as Record<string, unknown>;
+    const memoryId = asString(d.memoryId);
+    const schema = asObject(d.schema);
+    if (!memoryIds.has(memoryId) || seenDatasetMemory.has(memoryId) || !schema || !Array.isArray(d.rows)) continue;
+    seenDatasetMemory.add(memoryId);
+    datasets.push({
+      memoryId,
+      archetype: asString(d.archetype, "generic_table").slice(0, 40),
+      sourceFilename: asString(d.sourceFilename, "dataset").slice(0, 255),
+      sourceFormat: asString(d.sourceFormat, "csv").slice(0, 8),
+      schema,
+      rows: (d.rows as unknown[]).slice(0, 100_000).map((r) => {
+        const x = r && typeof r === "object" ? (r as Record<string, unknown>) : {};
+        return { canonical: asObject(x.canonical ?? x.c) ?? {}, custom: asObject(x.custom ?? x.x) ?? {} };
+      }),
+    });
+  }
+
   return {
     ok: true,
     backup: {
@@ -304,6 +380,7 @@ export function parseMindBackup(raw: unknown): { ok: true; backup: MindBackup } 
       memoryConcepts,
       connections,
       assistantMessages,
+      datasets,
       draftJson:
         typeof o.draftJson === "string"
           ? o.draftJson

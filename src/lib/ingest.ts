@@ -7,13 +7,30 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-export const MAX_TEXT_CHARS = 400_000;
-export const MAX_MEDIA_BYTES = 6_000_000;
+import type { JsonObject, ViewerType } from "./digestion/viewer-types.ts";
+import type { DatasetDraft } from "./digestion/dataset-draft.ts";
 
-export type IngestKind = "text" | "photo" | "video" | "voice" | "document" | "link";
+export const MAX_TEXT_CHARS = 400_000;
+/**
+ * Originals are stored inline as base64 data URLs. The host rejects request bodies above ~4.5 MB
+ * and base64 adds a third, so 3 MB is the honest per-file cap (it was 6 MB, which failed on upload).
+ */
+export const MAX_MEDIA_BYTES = 3_000_000;
+
+export type IngestKind = "text" | "photo" | "video" | "voice" | "document" | "link" | "dataset" | "rich";
 
 export type IngestItem = {
   kind: IngestKind;
+  /** Rich (multimodal) items carry their adaptive viewer and parsed facts; see digestion/dispatch. */
+  viewerType?: ViewerType;
+  memoryType?: "voice" | "text" | "photo" | "video" | "document" | "dataset";
+  extractedMetadata?: JsonObject | null;
+  artifactState?: JsonObject | null;
+  thumbDataUrl?: string | null;
+  transcript?: string | null;
+  aiSummary?: string | null;
+  /** Tabular uploads: parsed rows held in the browser until save streams them in batches. */
+  dataset?: DatasetDraft;
   title: string;
   body: string;
   mediaUrl: string | null;
@@ -123,7 +140,7 @@ export function canDropImport(dt: DataTransfer | null | undefined): boolean {
   return types.includes("text/plain") || types.includes("text/uri-list") || types.includes("text/html");
 }
 
-function clipText(body: string, name?: string): { body: string; truncated: boolean; warning?: string } {
+export function clipText(body: string, name?: string): { body: string; truncated: boolean; warning?: string } {
   if (body.length <= MAX_TEXT_CHARS) return { body, truncated: false };
   const kept = body.slice(0, MAX_TEXT_CHARS);
   return {
@@ -163,7 +180,21 @@ export function ingestTextBlock(text: string, sourceName?: string): IngestItem {
   };
 }
 
+/** Rich items always go through the queue and save path (never merged into the text form). */
+export function isRichItem(item: IngestItem): boolean {
+  return Boolean(item.dataset) || (item.viewerType !== undefined && item.viewerType !== "plain");
+}
+
 export async function ingestFile(file: File): Promise<IngestItem> {
+  // The multimodal dispatcher (tables, images, documents, …) loads on demand so its parsers stay
+  // out of the first-load bundle; anything it does not claim takes the plain path below.
+  const { digestMultimodalFile } = await import("./digestion/dispatch.ts");
+  const routed = await digestMultimodalFile(file);
+  if (routed) return routed;
+  return ingestPlainFile(file);
+}
+
+export async function ingestPlainFile(file: File): Promise<IngestItem> {
   const kind = classifyFile(file);
   const title = titleFromFilename(file.name);
 
@@ -198,7 +229,7 @@ export async function ingestFile(file: File): Promise<IngestItem> {
       sourceUrl: null,
       truncated: false,
       bytes: file.size,
-      warning: `${file.name} is ${formatBytes(file.size)}. Keep media under ${formatBytes(MAX_MEDIA_BYTES)}, or paste the text instead.`,
+      warning: `${file.name} is ${formatBytes(file.size)}. Files over ${formatBytes(MAX_MEDIA_BYTES)} can't be stored as originals yet. Paste the text instead.`,
     };
   }
 
