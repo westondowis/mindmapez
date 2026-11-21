@@ -1,4 +1,5 @@
 import type { BrainSector } from "@/lib/brain";
+import type { JsonObject, ViewerType } from "@/lib/digestion/viewer-types";
 
 export const MEMORY_TYPES = [
   "voice",
@@ -9,6 +10,7 @@ export const MEMORY_TYPES = [
   "thought",
   "reflection",
   "link",
+  "dataset",
 ] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
@@ -62,17 +64,24 @@ export type Plan = "free" | "pro";
 export const SOURCE_KINDS = ["article", "podcast", "youtube", "rss", "other"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
-export type Memory = {
+/**
+ * What graph/list/search payloads carry per memory: no body, transcript or media bytes.
+ * `snippet` is ≤280 chars (summary or body head), `contentLength` drives synapse length,
+ * `thumbUrl` is a ≤24 KB preview. Open one memory with getMemory for the heavy fields.
+ */
+export type MemorySummary = {
   id: string;
   title: string;
-  body: string;
   memoryType: MemoryType;
+  viewerType: ViewerType;
   emotion: string | null;
   importance: number;
   aiImpact: ImpactLevel;
   aiSummary: string | null;
-  transcript: string | null;
-  mediaUrl: string | null;
+  snippet: string;
+  contentLength: number;
+  thumbUrl: string | null;
+  hasMedia: boolean;
   mediaMime: string | null;
   mediaName: string | null;
   nodeKind: NodeKind;
@@ -86,6 +95,15 @@ export type Memory = {
   sourceKind: SourceKind | null;
   createdAt: string;
   updatedAt: string;
+};
+
+/** A fully hydrated memory. `mediaUrl` is loaded separately (getMemoryMedia) when `hasMedia`. */
+export type Memory = MemorySummary & {
+  body: string;
+  transcript: string | null;
+  mediaUrl: string | null;
+  extractedMetadata: JsonObject;
+  artifactState: JsonObject;
 };
 
 export type MemoryDetail = Memory & {
@@ -130,7 +148,7 @@ export type GraphPayload = {
   voiceCount: number;
   connectionCount: number;
   concepts: Concept[];
-  memories: Memory[];
+  memories: MemorySummary[];
   connections: GraphConnection[];
   suggested: GraphConnection[];
   lastSavedAt: string | null;
@@ -146,8 +164,8 @@ export type DashboardStats = {
   topTopics: { name: string; count: number }[];
   growingConcepts: { name: string; count: number }[];
   topEmotions: { name: string; count: number }[];
-  recent: Memory[];
-  favorites: Memory[];
+  recent: MemorySummary[];
+  favorites: MemorySummary[];
   suggested: {
     id: string;
     reason: string | null;

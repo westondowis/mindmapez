@@ -9,7 +9,9 @@ import { mergeTags, normalizeTags } from "@/lib/tags";
 import { isBlockedTag, normalizeTagName } from "@/lib/tag-intel";
 import { autoTagText, syncMemoryTags } from "@/lib/tags-core";
 import { organizeMemory, suggestTags, transcribeAudio } from "./ai";
-import { mapConcept, mapConnection, mapMemory, type MemoryRow } from "./map";
+import { inlineMediaOrNull, validateViewerFields, type JsonObject, type ViewerType } from "@/lib/digestion/viewer-types";
+import type { Sql } from "@/lib/db";
+import { mapConcept, mapConnection, mapMemory, mapMemorySummary, memoryDetailColumns, memorySummaryColumns, type MemoryRow } from "./map";
 import { ensureUserSettings } from "./seed";
 
 async function getPlan(userId: string) {
@@ -25,10 +27,24 @@ export const listMemories = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const sql = await getSql();
     await ensureUserSettings(sql, context.userId);
-    const rows = await sql<MemoryRow>`
-      select * from memories where user_id = ${context.userId} order by created_at desc
+    const rows = await sql.query<MemoryRow>(
+      `select ${memorySummaryColumns()} from memories where user_id = $1 order by created_at desc`,
+      [context.userId],
+    );
+    return rows.map(mapMemorySummary);
+  });
+
+/** The media bytes of one memory, loaded only when its viewer needs them. */
+export const getMemoryMedia = createServerFn({ method: "GET" })
+  .validator((id: string) => id)
+  .middleware([authMiddleware])
+  .handler(async ({ context, data: id }) => {
+    const sql = await getSql();
+    const rows = await sql<{ media_url: string | null; media_mime: string | null; media_name: string | null }>`
+      select media_url, media_mime, media_name from memories where id = ${id} and user_id = ${context.userId}
     `;
-    return rows.map(mapMemory);
+    const r = rows[0];
+    return r ? { mediaUrl: r.media_url, mediaMime: r.media_mime, mediaName: r.media_name } : null;
   });
 
 export const getMemory = createServerFn({ method: "GET" })
@@ -36,9 +52,10 @@ export const getMemory = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context, data: id }): Promise<MemoryDetail | null> => {
     const sql = await getSql();
-    const rows = await sql<MemoryRow>`
-      select * from memories where id = ${id} and user_id = ${context.userId}
-    `;
+    const rows = await sql.query<MemoryRow>(
+      `select ${memoryDetailColumns()} from memories where id = $1 and user_id = $2`,
+      [id, context.userId],
+    );
     const row = rows[0];
     if (!row) return null;
     await sql`
@@ -102,14 +119,29 @@ export type CreateMemoryInput = {
   sourceKind?: string | null;
   /** Caller-supplied quick overview (e.g. from an uploaded document); wins over the auto summary. */
   aiSummary?: string | null;
+  /** v5.35 multimodal viewer fields; re-validated server-side (types, sizes, caps). */
+  viewerType?: ViewerType;
+  extractedMetadata?: JsonObject | null;
+  artifactState?: JsonObject | null;
+  thumbDataUrl?: string | null;
 };
+
+export type CreateMemoryResult =
+  | { ok: true; memory: ReturnType<typeof mapMemorySummary> }
+  | { ok: false; error: string };
 
 export const createMemory = createServerFn({ method: "POST" })
   .validator((input: CreateMemoryInput) => input)
   .middleware([authMiddleware])
-  .handler(async ({ context, data }) => {
+  .handler(async ({ context, data }): Promise<CreateMemoryResult> => {
+    const sql = await getSql();
+    return createMemoryForUser(sql, context.userId, data);
+  });
+
+/** Shared by createMemory and the dataset/multimodal paths: plan limit, organize, insert, links. */
+export async function createMemoryForUser(sql: Sql, userId: string, data: CreateMemoryInput): Promise<CreateMemoryResult> {
+    const context = { userId };
     try {
-      const sql = await getSql();
       await ensureUserSettings(sql, context.userId);
       const countRows = await sql<{ n: number }>`
         select count(*)::int as n from memories where user_id = ${context.userId}
@@ -148,6 +180,15 @@ export const createMemory = createServerFn({ method: "POST" })
       const emoji = data.emoji?.trim() || null;
       const color = data.color?.trim() || null;
       const body = data.body?.trim() || transcript || title;
+      const viewer = validateViewerFields({
+        viewerType: data.viewerType,
+        extractedMetadata: data.extractedMetadata,
+        artifactState: data.artifactState,
+        thumbDataUrl: data.thumbDataUrl,
+      });
+      // Originals over the 3 MB inline cap are dropped (never the memory): the host rejects
+      // request bodies above ~4.5 MB and base64 inflates by a third.
+      const mediaUrl = inlineMediaOrNull(data.mediaUrl);
       const sourceUrl = data.sourceUrl?.trim() || null;
       const sourceKind = data.sourceKind?.trim() || null;
 
@@ -174,13 +215,16 @@ export const createMemory = createServerFn({ method: "POST" })
         insert into memories (
           id, user_id, title, body, memory_type, emotion, importance, ai_impact,
           ai_summary, transcript, media_url, media_mime, media_name, node_kind, tags_json,
-          emoji, color, position_x, position_y, source_url, source_kind
+          emoji, color, position_x, position_y, source_url, source_kind,
+          viewer_type, extracted_metadata_json, artifact_state_json, thumb_data_url
         ) values (
           ${id}, ${context.userId}, ${title}, ${body}, ${data.memoryType}, ${emotion},
           ${importance}, ${organized.impact}, ${summary}, ${transcript},
-          ${data.mediaUrl ?? null}, ${data.mediaMime ?? null}, ${data.mediaName ?? null},
+          ${mediaUrl}, ${data.mediaMime ?? null}, ${data.mediaName ?? null},
           ${organized.kind}, ${tags}, ${emoji}, ${color}, ${posX}, ${posY},
-          ${sourceUrl}, ${sourceKind}
+          ${sourceUrl}, ${sourceKind},
+          ${viewer.viewerType}, ${JSON.stringify(viewer.extractedMetadata)}::jsonb,
+          ${JSON.stringify(viewer.artifactState)}::jsonb, ${viewer.thumbDataUrl}
         )
       `;
 
@@ -248,11 +292,12 @@ export const createMemory = createServerFn({ method: "POST" })
         `;
       }
 
-      const created = await sql<MemoryRow>`
-        select * from memories where id = ${id} and user_id = ${context.userId}
-      `;
+      const created = await sql.query<MemoryRow>(
+        `select ${memorySummaryColumns()} from memories where id = $1 and user_id = $2`,
+        [id, context.userId],
+      );
       await sql`update user_settings set last_saved_at = now() where user_id = ${context.userId}`;
-      return { ok: true as const, memory: mapMemory(created[0]!) };
+      return { ok: true as const, memory: mapMemorySummary(created[0]!) };
     } catch (err) {
       console.error("createMemory failed", err);
       return {
@@ -260,7 +305,7 @@ export const createMemory = createServerFn({ method: "POST" })
         error: err instanceof Error ? err.message : "Could not save that memory",
       };
     }
-  });
+}
 
 export const updateMemory = createServerFn({ method: "POST" })
   .validator(
@@ -281,7 +326,8 @@ export const updateMemory = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const sql = await getSql();
     const existing = await sql<MemoryRow>`
-      select * from memories where id = ${data.id} and user_id = ${context.userId}
+      select title, body, emotion, importance, node_kind, emoji, color, tags_json, ai_summary
+      from memories where id = ${data.id} and user_id = ${context.userId}
     `;
     if (!existing[0]) return { ok: false as const, error: "Not found" };
     const title = data.title ?? existing[0].title;
@@ -357,9 +403,11 @@ export const getGraph = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const sql = await getSql();
     await ensureUserSettings(sql, context.userId);
-    const memories = await sql<MemoryRow>`
-      select * from memories where user_id = ${context.userId}
-    `;
+    // Lightweight graph: no body, transcript or media bytes (content_length keeps synapse scale).
+    const memories = await sql.query<MemoryRow>(
+      `select ${memorySummaryColumns()} from memories where user_id = $1`,
+      [context.userId],
+    );
     const concepts = await sql<{
       id: string;
       name: string;
@@ -414,7 +462,7 @@ export const getGraph = createServerFn({ method: "GET" })
       voiceCount,
       connectionCount: accepted.length,
       concepts: concepts.map(mapConcept),
-      memories: memories.map(mapMemory),
+      memories: memories.map(mapMemorySummary),
       connections: accepted.map(mapConnection),
       suggested: connections.filter((c) => c.status === "suggested").map(mapConnection),
       lastSavedAt: settings[0]?.last_saved_at ?? null,
@@ -431,7 +479,7 @@ export const suggestMemoryTags = createServerFn({ method: "POST" })
     let existing = data.existing ?? [];
     if (data.memoryId) {
       const rows = await sql<MemoryRow>`
-        select * from memories where id = ${data.memoryId} and user_id = ${context.userId}
+        select title, body, ai_summary, transcript, tags_json from memories where id = ${data.memoryId} and user_id = ${context.userId}
       `;
       const row = rows[0];
       if (!row) return { tags: [] as string[] };
@@ -458,4 +506,32 @@ export const suggestMemoryTags = createServerFn({ method: "POST" })
       excludeMemoryId: data.memoryId,
     });
     return { tags: mergeTags(kept, tags) };
+  });
+
+/**
+ * Persist a viewer's editable state (checklist items, HTML mini-app storage, reader position).
+ * Capped at 256 KB (DB check + validation) and limited to ~1 save per second per memory across
+ * serverless instances via artifact_saved_at; a throttled save reports rate_limited so the client
+ * retries after its debounce.
+ */
+export const saveArtifactState = createServerFn({ method: "POST" })
+  .validator((input: { id: string; state: JsonObject }) => input)
+  .middleware([authMiddleware])
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    let state: JsonObject;
+    try {
+      state = validateViewerFields({ artifactState: data.state }).artifactState as JsonObject;
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : "Invalid state" };
+    }
+    const rows = await sql<{ id: string }>`
+      update memories set artifact_state_json = ${JSON.stringify(state)}::jsonb, artifact_saved_at = now(), updated_at = now()
+      where id = ${data.id} and user_id = ${context.userId}
+        and (artifact_saved_at is null or artifact_saved_at < now() - interval '900 milliseconds')
+      returning id
+    `;
+    if (rows.length) return { ok: true as const };
+    const exists = await sql<{ id: string }>`select id from memories where id = ${data.id} and user_id = ${context.userId}`;
+    return exists.length ? { ok: false as const, error: "rate_limited" } : { ok: false as const, error: "Not found" };
   });

@@ -1,10 +1,12 @@
-import { assignSectorFromName, normalizeSectorId } from "@/lib/brain";
+import { assignSectorFromName, normalizeSectorId } from "../brain.ts";
+import { isViewerType, type JsonObject } from "../digestion/viewer-types.ts";
 import type {
   Concept,
   ConceptKind,
   GraphConnection,
   ImpactLevel,
   Memory,
+  MemorySummary,
   MemoryType,
   NodeKind,
   SourceKind,
@@ -34,7 +36,35 @@ export type MemoryRow = {
   source_kind?: string | null;
   created_at: string;
   updated_at: string;
+  viewer_type?: string | null;
+  content_length?: number | null;
+  thumb_data_url?: string | null;
+  extracted_metadata_json?: Record<string, unknown> | string | null;
+  artifact_state_json?: Record<string, unknown> | string | null;
+  /** Summary selects only. */
+  snippet?: string | null;
+  has_media?: boolean | null;
 };
+
+/**
+ * Columns for graph/list/search payloads: never body, transcript or media_url.
+ * `alias` prefixes every column (e.g. "m").
+ */
+export function memorySummaryColumns(alias = ""): string {
+  const a = alias ? `${alias}.` : "";
+  return [
+    "id", "title", "memory_type", "viewer_type", "emotion", "importance", "ai_impact", "ai_summary",
+    "media_mime", "media_name", "node_kind", "tags_json", "access_count", "position_x", "position_y",
+    "emoji", "color", "source_url", "source_kind", "created_at", "updated_at", "content_length", "thumb_data_url",
+  ].map((c) => `${a}${c}`).join(", ") +
+    `, left(coalesce(nullif(${a}ai_summary, ''), ${a}body), 280) as snippet, (${a}media_url is not null) as has_media`;
+}
+
+/** Everything for one opened memory except the media bytes (getMemoryMedia loads those). */
+export function memoryDetailColumns(alias = ""): string {
+  const a = alias ? `${alias}.` : "";
+  return `${memorySummaryColumns(alias)}, ${a}body, ${a}transcript, ${a}extracted_metadata_json, ${a}artifact_state_json`;
+}
 
 export type ConceptRow = {
   id: string;
@@ -73,18 +103,36 @@ function parseTags(raw: string): string[] {
   }
 }
 
-export function mapMemory(row: MemoryRow): Memory {
+function parseJsonObject(v: Record<string, unknown> | string | null | undefined): JsonObject {
+  if (!v) return {};
+  if (typeof v === "string") {
+    try {
+      const o = JSON.parse(v) as unknown;
+      return o && typeof o === "object" && !Array.isArray(o) ? (o as JsonObject) : {};
+    } catch {
+      return {};
+    }
+  }
+  return v as JsonObject;
+}
+
+export function mapMemorySummary(row: MemoryRow): MemorySummary {
+  const snippet = row.snippet ?? ((row.ai_summary || row.body || "").slice(0, 280));
+  const contentLength =
+    row.content_length ?? (row.title?.length ?? 0) + (row.body?.length ?? 0) + (row.transcript?.length ?? 0);
   return {
     id: row.id,
     title: row.title,
-    body: row.body,
     memoryType: row.memory_type as MemoryType,
+    viewerType: isViewerType(row.viewer_type) ? row.viewer_type : "plain",
     emotion: row.emotion,
     importance: Number(row.importance) || 3,
     aiImpact: (row.ai_impact as ImpactLevel) || "medium",
     aiSummary: row.ai_summary,
-    transcript: row.transcript,
-    mediaUrl: row.media_url,
+    snippet,
+    contentLength: Number(contentLength) || 0,
+    thumbUrl: row.thumb_data_url ?? null,
+    hasMedia: row.has_media ?? Boolean(row.media_url),
     mediaMime: row.media_mime,
     mediaName: row.media_name,
     nodeKind: (row.node_kind as NodeKind) || "learning",
@@ -98,6 +146,17 @@ export function mapMemory(row: MemoryRow): Memory {
     sourceKind: (row.source_kind as SourceKind) ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+export function mapMemory(row: MemoryRow): Memory {
+  return {
+    ...mapMemorySummary(row),
+    body: row.body ?? "",
+    transcript: row.transcript ?? null,
+    mediaUrl: row.media_url ?? null,
+    extractedMetadata: parseJsonObject(row.extracted_metadata_json),
+    artifactState: parseJsonObject(row.artifact_state_json),
   };
 }
 

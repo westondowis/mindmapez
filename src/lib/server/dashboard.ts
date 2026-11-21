@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 import type { DashboardStats } from "@/lib/types";
-import { mapMemory, type MemoryRow } from "./map";
+import { mapMemorySummary, memorySummaryColumns, type MemoryRow } from "./map";
 import { ensureUserSettings, resetMind } from "./seed";
 
 export const getDashboard = createServerFn({ method: "GET" })
@@ -11,10 +11,21 @@ export const getDashboard = createServerFn({ method: "GET" })
     const sql = await getSql();
     await ensureUserSettings(sql, context.userId);
 
-    const memories = await sql<MemoryRow>`
-      select * from memories where user_id = ${context.userId} order by created_at desc
+    // Counts in SQL; only the dozen rows the dashboard shows travel, and never body/media bytes.
+    const counts = await sql<{ total: number; voice: number; visual: number }>`
+      select count(*)::int as total,
+             count(*) filter (where memory_type = 'voice')::int as voice,
+             count(*) filter (where memory_type in ('photo', 'video'))::int as visual
+      from memories where user_id = ${context.userId}
     `;
-    const mapped = memories.map(mapMemory);
+    const recentRows = await sql.query<MemoryRow>(
+      `select ${memorySummaryColumns()} from memories where user_id = $1 order by created_at desc limit 8`,
+      [context.userId],
+    );
+    const favoriteRows = await sql.query<MemoryRow>(
+      `select ${memorySummaryColumns()} from memories where user_id = $1 order by importance desc, access_count desc, created_at desc limit 5`,
+      [context.userId],
+    );
     const settings = await sql<{ plan: string }>`
       select plan from user_settings where user_id = ${context.userId}
     `;
@@ -91,15 +102,15 @@ export const getDashboard = createServerFn({ method: "GET" })
 
     return {
       plan: settings[0]?.plan === "pro" ? "pro" : "free",
-      memoryCount: mapped.length,
-      voiceCount: mapped.filter((m) => m.memoryType === "voice").length,
-      photoCount: mapped.filter((m) => m.memoryType === "photo" || m.memoryType === "video").length,
+      memoryCount: Number(counts[0]?.total ?? 0),
+      voiceCount: Number(counts[0]?.voice ?? 0),
+      photoCount: Number(counts[0]?.visual ?? 0),
       connectionCount: Number(conn[0]?.n ?? 0),
       topTopics: topics,
       growingConcepts: growing,
       topEmotions: emotions.filter((e) => e.name),
-      recent: mapped.slice(0, 8),
-      favorites: [...mapped].sort((a, b) => b.importance - a.importance || b.accessCount - a.accessCount).slice(0, 5),
+      recent: recentRows.map(mapMemorySummary),
+      favorites: favoriteRows.map(mapMemorySummary),
       suggested,
     };
   });
