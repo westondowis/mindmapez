@@ -317,3 +317,19 @@ html, body {
 .synapse-current-halo { stroke-opacity: 0.55; }
 /* Every synapse is always live: never paused by selection, recency, reduced motion, or offscreen culling. */
 .synapse-svg, .synapse-soma, .synapse-ring, .synapse-myelin, .synapse-current { animation-play-state: running !important; }
+
+/* Document reader / original HTML (sanitized). */
+.doc-prose { overflow-wrap: anywhere; }
+.doc-prose h1 { font-size: 1.5em; font-weight: 700; margin: 1.2em 0 0.5em; }
+.doc-prose h2 { font-size: 1.3em; font-weight: 700; margin: 1.1em 0 0.45em; }
+.doc-prose h3, .doc-prose h4, .doc-prose h5, .doc-prose h6 { font-size: 1.1em; font-weight: 600; margin: 1em 0 0.4em; }
+.doc-prose p { margin: 0 0 0.8em; }
+.doc-prose ul { list-style: disc; padding-left: 1.4em; margin: 0 0 0.8em; }
+.doc-prose ol { list-style: decimal; padding-left: 1.4em; margin: 0 0 0.8em; }
+.doc-prose blockquote { border-left: 3px solid var(--color-border, #ddd); padding-left: 0.8em; color: var(--color-muted-foreground, #666); }
+.doc-prose pre, .doc-prose code { font-family: ui-monospace, monospace; font-size: 0.9em; }
+.doc-prose pre { background: var(--color-muted, #f4f4f5); padding: 0.75em; border-radius: 0.5em; overflow-x: auto; }
+.doc-prose table { border-collapse: collapse; margin: 0 0 0.8em; }
+.doc-prose td, .doc-prose th { border: 1px solid var(--color-border, #ddd); padding: 0.25em 0.5em; }
+.doc-prose a { color: var(--color-primary, #2563eb); text-decoration: underline; }
+.doc-prose img { max-width: 100%; height: auto; }

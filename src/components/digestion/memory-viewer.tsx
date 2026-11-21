@@ -1,9 +1,24 @@
-import { Download, FileText } from "lucide-react";
+import { lazy, Suspense } from "react";
+import { Download, FileText, Loader2 } from "lucide-react";
 import type { Memory } from "@/lib/types";
 import { DigestViewer } from "./digest-viewer";
 import { useMemoryMedia } from "./use-memory-media";
 
 type Props = { memory: Memory; compact?: boolean };
+
+// Each rich viewer is its own chunk, loaded only when a memory of that type is opened.
+const HtmlAppView = lazy(() => import("./html-app-view").then((m) => ({ default: m.HtmlAppView })));
+const StructuredTreeView = lazy(() => import("./structured-tree-view").then((m) => ({ default: m.StructuredTreeView })));
+const SvgView = lazy(() => import("./svg-view").then((m) => ({ default: m.SvgView })));
+const DocumentReaderView = lazy(() => import("./document-reader-view").then((m) => ({ default: m.DocumentReaderView })));
+const CalendarEventView = lazy(() => import("./calendar-event-view").then((m) => ({ default: m.CalendarEventView })));
+const EmailThreadView = lazy(() => import("./email-thread-view").then((m) => ({ default: m.EmailThreadView })));
+const GeoMapView = lazy(() => import("./geo-map-view").then((m) => ({ default: m.GeoMapView })));
+const ArchiveTreeView = lazy(() => import("./archive-tree-view").then((m) => ({ default: m.ArchiveTreeView })));
+
+function Lazy({ children }: { children: React.ReactNode }) {
+  return <Suspense fallback={<Loader2 aria-label="Loading viewer" className="mt-4 size-4 animate-spin text-muted-foreground" />}>{children}</Suspense>;
+}
 
 /**
  * Adaptive viewer shell: picks the renderer from memories.viewer_type. Heavy originals (images,
@@ -18,10 +33,30 @@ export function MemoryViewer({ memory, compact }: Props) {
       return <ImageViewer memory={memory} compact={compact} />;
     case "media":
       return <MediaViewer memory={memory} compact={compact} />;
+    case "html_app":
+      return <Lazy><HtmlAppView memory={memory} compact={compact} /></Lazy>;
+    case "structured_tree":
+      return <Lazy><StructuredTreeView memory={memory} compact={compact} /></Lazy>;
+    case "svg_viewer":
+      return <Lazy><SvgView memory={memory} compact={compact} /></Lazy>;
+    case "document_reader":
+      return <Lazy><DocumentReaderView memory={memory} compact={compact} /></Lazy>;
+    case "calendar_event":
+      return <Lazy><CalendarEventView memory={memory} compact={compact} /></Lazy>;
+    case "email_thread":
+      return <Lazy><EmailThreadView memory={memory} compact={compact} /></Lazy>;
+    case "geo_map":
+      return <Lazy><GeoMapView memory={memory} compact={compact} /></Lazy>;
+    case "archive_tree":
+      return <Lazy><ArchiveTreeView memory={memory} compact={compact} /></Lazy>;
     case "file":
       return (
         <>
-          <PlainText memory={memory} compact={compact} />
+          {(memory.extractedMetadata as { note?: string }).note ? (
+            <p role="status" className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{String((memory.extractedMetadata as { note?: string }).note)}</p>
+          ) : (
+            <PlainText memory={memory} compact={compact} />
+          )}
           <FileCard memory={memory} />
         </>
       );
