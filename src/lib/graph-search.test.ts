@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildSearchIndex, filterSearchIndex, resolveSearchTarget } from "./graph-search.ts";
-import type { GraphPayload, Concept, Memory } from "./types.ts";
+import type { GraphPayload, Concept, MemorySummary } from "./types.ts";
 
 const branch = (id: string, parentId: string | null, name = id) => ({ id, parentId, name, sectorId: "frontal", description: id === "deep" ? "Seller financing key points" : "" }) as Concept;
-const mem = (id: string, title: string, tags: string[], aiSummary = "") => ({ id, title, tags, body: "", aiSummary, transcript: null }) as Memory;
+const mem = (id: string, title: string, tags: string[], aiSummary = "") => ({ id, title, tags, snippet: aiSummary, aiSummary }) as MemorySummary;
 const graph = {
   concepts: [branch("root", null), branch("deep", "root", "Negotiation"), branch("other", null, "Negotiation")],
   memories: [mem("m", "Call notes", ["Seller", "CRM"], "Follow up on financing"), mem("orphan", "Unlinked", [])],

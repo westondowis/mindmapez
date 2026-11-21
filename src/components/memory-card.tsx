@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { FileText, ImageIcon, Link2, Mic, Type, Video } from "lucide-react";
+import { FileText, ImageIcon, Link2, Mic, Table2, Type, Video } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { KIND_LABEL, KIND_TONE } from "@/lib/kind-styles";
-import type { Memory } from "@/lib/types";
+import type { MemorySummary } from "@/lib/types";
 import { formatRelative } from "@/lib/utils";
 import { Stars } from "./stars";
 
@@ -15,9 +15,10 @@ const TYPE_ICON = {
   thought: Type,
   reflection: Type,
   link: Link2,
+  dataset: Table2,
 };
 
-export function MemoryCard({ memory }: { memory: Memory }) {
+export function MemoryCard({ memory }: { memory: MemorySummary }) {
   const Icon = TYPE_ICON[memory.memoryType] ?? Type;
   return (
     <Link
@@ -36,7 +37,7 @@ export function MemoryCard({ memory }: { memory: Memory }) {
         {memory.title}
       </h3>
       <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-        {memory.aiSummary ?? memory.body}
+        {memory.snippet}
       </p>
       <div className="mt-3 flex flex-wrap gap-1.5">
         {memory.tags.slice(0, 4).map((t) => (

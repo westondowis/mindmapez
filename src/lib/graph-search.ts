@@ -42,10 +42,10 @@ export function buildSearchIndex(graph: GraphPayload): SearchEntry[] {
     ...graph.memories.map(m => {
       const branchId = owners.get(m.id)?.[0] ?? null;
       return {
-        type: "memory" as const, id: m.id, title: m.title, snippet: m.aiSummary || m.body,
+        type: "memory" as const, id: m.id, title: m.title, snippet: m.snippet,
         tags: [...new Set(m.tags.map(normalize))], branchId,
         sectorId: branchId ? branches.get(branchId)?.sectorId ?? null : null,
-        text: normalize([m.title, m.aiSummary, m.body, m.transcript, ...m.tags].join(" ")),
+        text: normalize([m.title, m.aiSummary, m.snippet, ...m.tags].join(" ")),
       };
     }),
   ];

@@ -58,6 +58,8 @@ export function synapseLayout(chars = 0): SynapseLayout {
  * Characters of information a memory holds, used to size its synapse.
  * Counts title + body + transcript so every graph view measures the same way.
  */
-export function memoryContentLength(m: { title?: string | null; body?: string | null; transcript?: string | null }): number {
+export function memoryContentLength(m: { contentLength?: number | null; title?: string | null; body?: string | null; transcript?: string | null }): number {
+  // Lightweight graph rows carry the server-computed content_length (same formula, stored column).
+  if (typeof m.contentLength === "number" && m.contentLength >= 0) return m.contentLength;
   return (m.title?.length ?? 0) + (m.body?.length ?? 0) + (m.transcript?.length ?? 0);
 }
