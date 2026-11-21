@@ -79,3 +79,19 @@ export async function thumbFromUrl(url: string): Promise<{ thumb: string | null;
 export function thumbFromCanvas(canvas: HTMLCanvasElement): string | null {
   return thumbFrom(canvas, canvas.width, canvas.height);
 }
+
+/** Smaller JPEG copy sent to the vision model (≤1280 px, well under the request limit). */
+export async function visionCopy(blob: Blob): Promise<string | null> {
+  const src = URL.createObjectURL(blob);
+  try {
+    const img = await loadImage(src);
+    if (!img.naturalWidth || !img.naturalHeight) return null;
+    const canvas = drawScaled(img, img.naturalWidth, img.naturalHeight, 1280);
+    const url = canvas.toDataURL("image/jpeg", 0.82);
+    return url.length <= 2_500_000 ? url : canvas.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(src);
+  }
+}

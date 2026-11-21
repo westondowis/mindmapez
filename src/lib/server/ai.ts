@@ -17,9 +17,13 @@ export function llmConfig(env: Record<string, string | undefined> = process.env)
   return { apiKey, baseUrl, model };
 }
 
+/** OpenAI-compatible content parts; images go in as data URLs (vision models only). */
+export type LlmContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
+export type LlmMessage = { role: "system" | "user" | "assistant"; content: string | LlmContentPart[] };
+
 export async function llmChat(
-  messages: { role: "system" | "user" | "assistant"; content: string }[],
-  opts: { maxTokens?: number; temperature?: number } = {},
+  messages: LlmMessage[],
+  opts: { maxTokens?: number; temperature?: number; timeoutMs?: number } = {},
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   const cfg = llmConfig();
   if (!cfg) return { ok: false, error: "AI is not available in this environment" };
@@ -36,7 +40,7 @@ export async function llmChat(
         max_tokens: opts.maxTokens ?? 700,
         temperature: opts.temperature ?? 0.4,
       }),
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 25_000),
     });
     if (!res.ok) {
       return { ok: false, error: `LLM API error ${res.status}` };
