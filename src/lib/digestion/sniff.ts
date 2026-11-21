@@ -79,7 +79,9 @@ export function sniffRoute(name: string, mime: string, head?: Uint8Array): Route
 
 /** File-picker hint for every format the dispatcher digests (pickers still allow "all files"). */
 export const SUPPORTED_ACCEPT = [
-  ".csv", ".tsv", ".tab", ".xlsx", ".xlsm", ".json", ".ndjson", ".jsonl",
-  ".pdf", ".doc", ".docx", ".txt", ".md", ".rtf",
-  "image/*", "application/pdf", "text/csv",
+  ".csv", ".tsv", ".tab", ".xlsx", ".xlsm", ".json", ".ndjson", ".jsonl", ".geojson",
+  ".yaml", ".yml", ".xml", ".html", ".htm", ".svg",
+  ".pdf", ".doc", ".docx", ".txt", ".md", ".markdown", ".rtf", ".epub",
+  ".ics", ".vcf", ".eml", ".mbox", ".msg", ".kml", ".kmz", ".gpx", ".zip",
+  "image/*", "audio/*", "video/*", "application/pdf", "text/csv", "text/calendar", "text/vcard", "message/rfc822",
 ].join(",");

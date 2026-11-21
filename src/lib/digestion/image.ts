@@ -63,3 +63,19 @@ export async function makeImageVariants(blob: Blob): Promise<ImageVariants> {
     URL.revokeObjectURL(src);
   }
 }
+
+/** Raster thumbnail of any image URL the browser can decode (used for SVG through <img>, never inline). */
+export async function thumbFromUrl(url: string): Promise<{ thumb: string | null; width: number; height: number }> {
+  try {
+    const img = await loadImage(url);
+    const width = img.naturalWidth || 300;
+    const height = img.naturalHeight || 150;
+    return { thumb: thumbFrom(img, width, height), width, height };
+  } catch {
+    return { thumb: null, width: 0, height: 0 };
+  }
+}
+
+export function thumbFromCanvas(canvas: HTMLCanvasElement): string | null {
+  return thumbFrom(canvas, canvas.width, canvas.height);
+}
