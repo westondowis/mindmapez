@@ -1,10 +1,23 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Search, X } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { buildSearchIndex, filterSearchIndex, type SearchScope, type SearchTarget } from "@/lib/graph-search";
+import { searchMemories } from "@/lib/server/search";
 import type { GraphPayload } from "@/lib/types";
+
+const TIER_LABEL = { 1: "Tag", 2: "Branch", 3: "Title / summary", 4: "Full text" } as const;
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
 
 export function GraphSearchPanel({ graph, onPick }: { graph: GraphPayload; onPick: (target: SearchTarget) => void }) {
   const uid = useId();
@@ -14,6 +27,19 @@ export function GraphSearchPanel({ graph, onPick }: { graph: GraphPayload; onPic
   const index = useMemo(() => buildSearchIndex(graph), [graph]);
   const availableTags = useMemo(() => [...new Set(index.flatMap(entry => entry.tags))].sort(), [index]);
   const results = useMemo(() => filterSearchIndex(index, { query, scope, tags }), [index, query, scope, tags]);
+  // Tier 0 is the instant local filter above; tiers 1–3 (and opt-in deep search) run on the server.
+  const serverQuery = useDebounced(query.trim(), 300);
+  const [deepFor, setDeepFor] = useState<string | null>(null);
+  const deep = deepFor === serverQuery && serverQuery.length > 1;
+  const tiered = useQuery({
+    queryKey: ["tier-search", serverQuery, deep],
+    queryFn: () => searchMemories({ data: { query: serverQuery, deep } }),
+    enabled: serverQuery.length > 1 && scope !== "branches" && !tags.length,
+    staleTime: 30_000,
+  });
+  const localIds = useMemo(() => new Set(results.map(r => r.id)), [results]);
+  const memoryById = useMemo(() => new Map(graph.memories.map(m => [m.id, m])), [graph.memories]);
+  const extra = (tiered.data?.hits ?? []).filter(h => !localIds.has(h.id) && memoryById.has(h.id));
   return (
     <div className="flex min-h-0 flex-col gap-3">
       <label htmlFor={`${uid}-query`} className="text-sm text-muted-foreground">Keywords in titles, descriptions or key points</label>
@@ -43,7 +69,23 @@ export function GraphSearchPanel({ graph, onPick }: { graph: GraphPayload; onPic
           </button>
         </li>)}
       </ul>
-      {!results.length ? <p className="text-sm text-muted-foreground">No matches. Try fewer keywords or tags.</p> : null}
+      {extra.length ? <section aria-label="Deeper matches" className="space-y-2">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Also matching tags, branches and summaries</p>
+        <ul className="max-h-[35dvh] space-y-2 overflow-y-auto overscroll-contain">
+          {extra.map(hit => { const m = memoryById.get(hit.id)!; return <li key={`tier-${hit.id}`}>
+            <button type="button" onClick={() => onPick({ type: "memory", id: hit.id })} className="w-full rounded-xl border border-border bg-card p-3 text-left hover:border-primary focus-visible:outline-2 focus-visible:outline-primary">
+              <span className="text-[10px] uppercase tracking-wide text-primary">{TIER_LABEL[hit.tier]} · {hit.via}</span>
+              <p className="text-sm font-medium">{m.title}</p>
+              <p className="line-clamp-2 text-xs text-muted-foreground">{m.snippet}</p>
+            </button>
+          </li>; })}
+        </ul>
+      </section> : null}
+      {serverQuery.length > 1 && scope !== "branches" && !tags.length ? <div className="flex flex-wrap items-center gap-2">
+        {tiered.isFetching ? <span role="status" className="text-xs text-muted-foreground">Searching tags and summaries…</span> : null}
+        {!deep ? <Button type="button" size="sm" variant="outline" onClick={() => setDeepFor(serverQuery)}>Deep search full text &amp; datasets</Button> : <span className="text-xs text-muted-foreground">Deep search included full text and dataset rows.</span>}
+      </div> : null}
+      {!results.length && !extra.length && !tiered.isFetching ? <p className="text-sm text-muted-foreground">No matches. Try fewer keywords or tags.</p> : null}
     </div>
   );
 }

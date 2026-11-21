@@ -10,6 +10,7 @@ import { deleteMemory, getMemory, suggestMemoryTags, updateMemory } from "@/lib/
 import { EMOTIONS } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { TagEditor } from "@/components/tag-editor";
+import { MemoryViewer } from "@/components/digestion/memory-viewer";
 
 export const Route = createFileRoute("/memory/$id")({ component: MemoryRoute });
 
@@ -78,21 +79,7 @@ function MemoryPage() {
                 Open original{m.sourceKind ? ` · ${m.sourceKind}` : ""}
               </a>
             ) : null}
-            <p className="mt-6 whitespace-pre-wrap text-[15px] leading-relaxed text-foreground/90">{m.body}</p>
-            {m.transcript ? (
-              <blockquote className="mt-6 border-l-2 border-primary/40 pl-4 text-sm italic text-muted-foreground">
-                {m.transcript}
-              </blockquote>
-            ) : null}
-            {m.mediaUrl && m.mediaMime?.startsWith("audio/") ? (
-              <audio className="mt-6 w-full" controls src={m.mediaUrl} />
-            ) : null}
-            {m.mediaUrl && m.mediaMime?.startsWith("image/") ? (
-              <img src={m.mediaUrl} alt="" className="mt-6 w-full rounded-xl object-cover" />
-            ) : null}
-            {m.mediaUrl && m.mediaMime?.startsWith("video/") ? (
-              <video className="mt-6 w-full rounded-xl" controls src={m.mediaUrl} />
-            ) : null}
+            <MemoryViewer memory={m} />
             <div className="mt-6">
               <TagEditor
                 tags={m.tags}

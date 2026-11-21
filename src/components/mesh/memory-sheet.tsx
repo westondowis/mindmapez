@@ -12,6 +12,7 @@ import { deleteMemory, getMemory, suggestMemoryTags, updateMemory } from "@/lib/
 import { formatDate } from "@/lib/utils";
 import { EMOTIONS, NODE_KINDS, type NodeKind } from "@/lib/types";
 import { TagEditor } from "@/components/tag-editor";
+import { MemoryViewer } from "@/components/digestion/memory-viewer";
 
 export function MemorySheet({
   memoryId,
@@ -139,7 +140,7 @@ export function MemorySheet({
               <>
                 <h2 className="mt-3 font-display text-xl text-foreground">{m.title}</h2>
                 {m.aiSummary ? <p className="mt-2 max-h-28 overflow-y-auto text-sm text-[#c9b6ff]">{m.aiSummary}</p> : null}
-                <p className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{m.body}</p>
+                <MemoryViewer memory={m} compact />
               </>
             )}
             <div className="mt-4">
@@ -168,26 +169,6 @@ export function MemorySheet({
               >
                 Open source{m.sourceKind ? ` · ${m.sourceKind}` : ""}
               </a>
-            ) : null}
-            {m.transcript ? (
-              <div className="mt-4">
-                <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Transcript</p>
-                <p className="mt-1 text-sm italic text-foreground/80">{m.transcript}</p>
-              </div>
-            ) : null}
-            {m.mediaUrl && m.mediaMime?.startsWith("audio/") ? (
-              <audio className="mt-4 w-full" controls src={m.mediaUrl} />
-            ) : null}
-            {m.mediaUrl && !m.mediaMime?.startsWith("audio/") && !m.mediaMime?.startsWith("image/") && !m.mediaMime?.startsWith("video/") ? (
-              <a href={m.mediaUrl} download={m.mediaName ?? "document"} className="mt-3 inline-block text-sm text-primary hover:underline">
-                Download original{m.mediaName ? ` · ${m.mediaName}` : ""}
-              </a>
-            ) : null}
-            {m.mediaUrl && m.mediaMime?.startsWith("image/") ? (
-              <img src={m.mediaUrl} alt="" className="mt-4 max-h-56 w-full rounded-lg object-cover" />
-            ) : null}
-            {m.mediaUrl && m.mediaMime?.startsWith("video/") ? (
-              <video className="mt-4 w-full rounded-lg" controls src={m.mediaUrl} />
             ) : null}
             <div className="mt-5">
               <TagEditor
