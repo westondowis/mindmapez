@@ -2,7 +2,7 @@
  * Unified multimodal dispatcher (digestMultimodalFile). Routes every upload by extension + MIME +
  * magic bytes to its parser, producing an IngestItem with its adaptive viewer_type, extracted
  * metadata and preview thumbnail. All parsing runs in the browser; the server re-validates.
- * Returns null only for routes that keep the plain path (audio/video/HEIC until v5.37).
+ * Every route returns an item; null is reserved for callers that want the plain path.
  */
 import { blobToDataUrl } from "../utils.ts";
 import type { IngestItem } from "../ingest.ts";
@@ -10,7 +10,7 @@ import { clipText, formatBytes, titleFromFilename } from "../ingest.ts";
 import { buildDatasetDraft, draftFromTable } from "./dataset-draft.ts";
 import { ARCHETYPE_LABEL } from "./detect.ts";
 import { fitMetadata, overRequestBudget } from "./fit.ts";
-import { makeImageVariants, thumbFromCanvas, thumbFromUrl } from "./image.ts";
+import { makeImageVariants, thumbFromCanvas, thumbFromUrl, visionCopy } from "./image.ts";
 import { ARCHIVE_LIMITS, DATASET_LIMITS, EMAIL_LIMITS, XML_LIMITS } from "./limits.ts";
 import { sniffRoute, type Route } from "./sniff.ts";
 import { INLINE_ORIGINAL_MAX_BYTES, type JsonObject, type JsonValue, type OutlineEntry, type ViewerType } from "./viewer-types.ts";
@@ -122,27 +122,110 @@ async function digestVcf(file: File): Promise<IngestItem> {
 
 // ── Images ────────────────────────────────────────────────────────────────────
 
-async function digestImage(file: File, keepOriginal: boolean): Promise<IngestItem> {
+let visionProbe: Promise<{ vision: boolean; transcription: string | null }> | null = null;
+
+/** Whether AI vision / transcription is configured (asked once per session). */
+export function aiStatus(): Promise<{ vision: boolean; transcription: string | null }> {
+  visionProbe ??= import("../server/vision.ts")
+    .then((m) => m.visionStatus())
+    .catch(() => ({ vision: false, transcription: null }));
+  return visionProbe;
+}
+
+async function readImage(file: File): Promise<import("./vision-core.ts").VisionResult & { body: string } | null> {
+  if (!(await aiStatus()).vision) return null;
+  const copy = await visionCopy(file);
+  if (!copy) return null;
   try {
-    const v = await makeImageVariants(file);
-    // Animated GIFs keep their original bytes when they fit; everything else stores the
-    // re-encoded display copy (smaller, EXIF/GPS stripped).
-    const original = keepOriginal && file.size <= INLINE_ORIGINAL_MAX_BYTES ? await blobToDataUrl(file) : null;
-    const mediaUrl = original ?? v.display;
-    const meta: JsonObject = { v: "image", width: v.width, height: v.height };
-    return base(file, {
-      memoryType: "photo",
-      viewerType: "image",
-      mediaUrl,
-      mediaMime: original ? file.type || "image/gif" : mediaUrl?.slice(5, mediaUrl.indexOf(";")) || file.type,
-      thumbDataUrl: v.thumb,
-      extractedMetadata: meta,
-      body: "",
-      warning: mediaUrl ? undefined : `${file.name} is too large to store even after resizing.`,
-    });
+    const { analyzeImage } = await import("../server/vision.ts");
+    const res = (await analyzeImage({ data: { dataUrl: copy, mode: "auto" } })) as { ok: boolean; result?: import("./vision-core.ts").VisionResult & { body: string } };
+    return res.ok && res.result ? res.result : null;
+  } catch {
+    return null;
+  }
+}
+
+async function digestImage(file: File, keepOriginal: boolean, heic = false): Promise<IngestItem> {
+  let v: Awaited<ReturnType<typeof makeImageVariants>>;
+  try {
+    v = await makeImageVariants(file);
   } catch (err) {
+    if (heic) return fileCard(file, "HEIC photos can only be read in Safari for now — open MindMeld in Safari, or export the photo as JPEG");
     return errorItem(file, err instanceof Error ? err.message : `${file.name} could not be read`);
   }
+  // Animated GIFs keep their original bytes when they fit; everything else stores the
+  // re-encoded display copy (smaller, EXIF/GPS stripped; HEIC becomes WebP/JPEG).
+  const original = keepOriginal && file.size <= INLINE_ORIGINAL_MAX_BYTES ? await blobToDataUrl(file) : null;
+  const mediaUrl = original ?? v.display;
+  const meta: JsonObject = { v: "image", width: v.width, height: v.height };
+  if (heic) meta.heicNotice = true;
+  const seen = await readImage(file);
+  let viewerType: ViewerType = "image";
+  let artifactState: JsonObject | null = null;
+  if (seen) {
+    if (seen.caption) meta.caption = seen.caption;
+    if (seen.ocrText) meta.ocrText = seen.ocrText;
+    if (seen.kind === "prompt") meta.promptText = seen.promptText;
+    if (seen.kind === "checklist") {
+      viewerType = "interactive_checklist";
+      meta.v = "interactive_checklist";
+      artifactState = { items: seen.items as unknown as JsonValue };
+    }
+  }
+  return base(file, {
+    memoryType: "photo",
+    viewerType,
+    mediaUrl,
+    mediaMime: original ? file.type || "image/gif" : mediaUrl?.slice(5, mediaUrl.indexOf(";")) || file.type,
+    thumbDataUrl: v.thumb,
+    extractedMetadata: meta,
+    artifactState,
+    body: seen?.body ?? "",
+    warning: mediaUrl ? undefined : `${file.name} is too large to store even after resizing.`,
+  });
+}
+
+// ── Audio / video ─────────────────────────────────────────────────────────────
+
+/** Clips up to this long are transcribed while queued; longer ones get a Transcribe button. */
+const AUTO_TRANSCRIBE_SEC = 5 * 60;
+
+async function digestMedia(file: File, kind: "audio" | "video"): Promise<IngestItem> {
+  const { probeMedia, rememberSessionMedia, transcribeMediaFile } = await import("./media.ts");
+  const probe = await probeMedia(file, kind);
+  const original = await originalOf(file);
+  const sessionKey = original ? undefined : rememberSessionMedia(file);
+  const meta: JsonObject = { v: "media", kind, durationSec: Math.round(probe.durationSec * 100) / 100, segments: [], originalStored: Boolean(original), transcriptSource: "none" };
+  if (probe.width) meta.width = probe.width;
+  if (probe.height) meta.height = probe.height;
+  if (probe.posterAtSec !== undefined && probe.poster) meta.posterAtSec = probe.posterAtSec;
+  if (!probe.playable) meta.previewUnsupported = true;
+  if (sessionKey) meta.sessionKey = sessionKey;
+  let transcript: string | null = null;
+  let note: string | undefined;
+  const ai = await aiStatus();
+  if (ai.transcription && probe.durationSec > 0 && probe.durationSec <= AUTO_TRANSCRIBE_SEC) {
+    const t = await transcribeMediaFile(file);
+    if (t.ok) {
+      meta.segments = t.segments as unknown as JsonValue;
+      meta.transcriptSource = t.source;
+      transcript = t.text || null;
+    } else note = t.error;
+  }
+  const notes = [
+    original ? "" : "original over 3 MB, so it plays only in this tab until you reload",
+    probe.playable ? "" : "this browser can't preview this format",
+    note ?? "",
+  ].filter(Boolean);
+  return richItem(file, "media", meta, {
+    kind: kind === "video" ? "video" : "voice",
+    memoryType: kind === "video" ? "video" : "voice",
+    mediaUrl: original,
+    thumbDataUrl: probe.poster,
+    transcript,
+    body: transcript ?? "",
+    warning: notes.length ? `${file.name}: ${notes.join("; ")}.` : undefined,
+  });
 }
 
 async function digestSvg(file: File): Promise<IngestItem> {
@@ -456,10 +539,11 @@ export async function digestMultimodalFile(file: File): Promise<IngestItem | nul
         return await digestZip(file);
       case "xls":
         return await fileCard(file, "legacy .xls workbooks aren't readable yet — save as .xlsx or .csv");
+      case "heic":
+        return await digestImage(file, false, true);
       case "video":
       case "audio":
-      case "heic":
-        return null;
+        return await digestMedia(file, route);
       default:
         return await fileCard(file);
     }
