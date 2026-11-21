@@ -14,6 +14,9 @@ const DocumentReaderView = lazy(() => import("./document-reader-view").then((m) 
 const CalendarEventView = lazy(() => import("./calendar-event-view").then((m) => ({ default: m.CalendarEventView })));
 const EmailThreadView = lazy(() => import("./email-thread-view").then((m) => ({ default: m.EmailThreadView })));
 const GeoMapView = lazy(() => import("./geo-map-view").then((m) => ({ default: m.GeoMapView })));
+const ChecklistDigestView = lazy(() => import("./checklist-view").then((m) => ({ default: m.ChecklistDigestView })));
+const MediaDigestView = lazy(() => import("./media-digest-view").then((m) => ({ default: m.MediaDigestView })));
+const ImageAiPanel = lazy(() => import("./image-ai-panel").then((m) => ({ default: m.ImageAiPanel })));
 const ArchiveTreeView = lazy(() => import("./archive-tree-view").then((m) => ({ default: m.ArchiveTreeView })));
 
 function Lazy({ children }: { children: React.ReactNode }) {
@@ -30,9 +33,16 @@ export function MemoryViewer({ memory, compact }: Props) {
     case "contacts_crm":
       return <DigestViewer memoryId={memory.id} />;
     case "image":
-      return <ImageViewer memory={memory} compact={compact} />;
+      return (
+        <>
+          <ImageViewer memory={memory} compact={compact} />
+          <Lazy><ImageAiPanel memory={memory} compact={compact} /></Lazy>
+        </>
+      );
+    case "interactive_checklist":
+      return <Lazy><ChecklistDigestView memory={memory} compact={compact} /></Lazy>;
     case "media":
-      return <MediaViewer memory={memory} compact={compact} />;
+      return (memory.extractedMetadata as { v?: string }).v === "media" ? <Lazy><MediaDigestView memory={memory} compact={compact} /></Lazy> : <MediaViewer memory={memory} compact={compact} />;
     case "html_app":
       return <Lazy><HtmlAppView memory={memory} compact={compact} /></Lazy>;
     case "structured_tree":
@@ -114,7 +124,7 @@ function ImageViewer({ memory, compact }: Props) {
       ) : (
         <div className="grid h-40 place-items-center rounded-xl bg-muted text-xs text-muted-foreground">{media.isPending ? "Loading image…" : "Image not stored"}</div>
       )}
-      {memory.body && memory.body !== memory.title ? <figcaption className="mt-2 text-sm text-muted-foreground">{memory.body}</figcaption> : null}
+      {memory.body && memory.body !== memory.title && !(meta as { caption?: string; ocrText?: string; promptText?: string }).caption && !(meta as { ocrText?: string }).ocrText && !(meta as { promptText?: string }).promptText ? <figcaption className="mt-2 text-sm text-muted-foreground">{memory.body}</figcaption> : null}
     </figure>
   );
 }
