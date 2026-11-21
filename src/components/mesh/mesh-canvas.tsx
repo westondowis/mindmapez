@@ -54,6 +54,8 @@ import { createMemory, savePositions } from "@/lib/server/memories";
 import { layoutAnchoredMemories, memoriesForBranch } from "@/lib/branch-memories";
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import type { IngestItem } from "@/lib/ingest";
+import { saveIngestItem } from "@/lib/digestion/client-save";
 import { memoryContentLength, synapseLayout } from "@/lib/synapse";
 import {
   BRANCH_RADIUS,
@@ -912,6 +914,19 @@ export function MeshCanvas({
       await invalidate();
     },
   });
+  const fileMut = useMutation({
+    mutationFn: ({ item, conceptId }: { item: IngestItem; conceptId: string }) => saveIngestItem(item, { conceptId }),
+    onSuccess: async (res) => {
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Saved to this branch");
+      markAccountDirty();
+      await invalidate();
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Could not save that file"),
+  });
   const sectorMut = useMutation({
     mutationFn: saveBrainSectors,
     onSuccess: async (res) => {
@@ -1413,7 +1428,7 @@ export function MeshCanvas({
           key={selectedConcept.id}
           pathLabel={recordPath || selectedConcept.name}
           memories={memoriesForBranch(graph.memories, graph.connections, selectedConcept.id)}
-          pending={voiceMut.isPending}
+          pending={voiceMut.isPending || fileMut.isPending}
           onOpenMemory={onSelectMemory}
           onSave={(input) => {
             voiceMut.mutate({
@@ -1439,20 +1454,7 @@ export function MeshCanvas({
               },
             });
           }}
-          onSaveFile={(input) => {
-            voiceMut.mutate({
-              data: {
-                title: input.title,
-                body: input.body || input.title,
-                aiSummary: input.aiSummary,
-                memoryType: "document",
-                mediaUrl: input.mediaUrl,
-                mediaMime: input.mediaMime,
-                mediaName: input.mediaName,
-                conceptId: selectedConcept.id,
-              },
-            });
-          }}
+          onSaveFile={(item) => fileMut.mutate({ item, conceptId: selectedConcept.id })}
         />
         </div>
       ) : null}

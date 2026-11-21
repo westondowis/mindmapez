@@ -18,8 +18,12 @@ import {
   ingestTextBlock,
   pickFilesFromDevice,
   readSystemClipboard,
+  isRichItem,
+  MAX_MEDIA_BYTES,
   type IngestItem,
 } from "@/lib/ingest";
+import { saveIngestItem } from "@/lib/digestion/client-save";
+import { DatasetPreviewCard } from "@/components/digestion/dataset-preview-card";
 import { extractLink } from "@/lib/server/extract";
 import { createMemory, type CreateMemoryInput, suggestMemoryTags } from "@/lib/server/memories";
 import { clearAccountDraft, getAccountDraft, saveAccountDraft, type CaptureDraft } from "@/lib/server/persist";
@@ -96,7 +100,7 @@ export function CapturePanel({
   const [restored, setRestored] = useState(false);
   const [queue, setQueue] = useState<IngestItem[]>([]);
   const [dropHover, setDropHover] = useState(false);
-  const [batch, setBatch] = useState<{ total: number; done: number } | null>(null);
+  const [batch, setBatch] = useState<{ total: number; done: number; rows?: { done: number; total: number } } | null>(null);
   const skipDraft = useRef(false);
   const recordingRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -111,6 +115,11 @@ export function CapturePanel({
   useEffect(() => {
     if (!recorder.blob || recorder.status !== "idle") return;
     void (async () => {
+      if (recorder.blob!.size > MAX_MEDIA_BYTES) {
+        // Over the 3 MB inline cap: keep the live transcript, skip storing the audio itself.
+        toast.message("This recording is over 3 MB, so only its transcript will be saved.");
+        return;
+      }
       const url = await blobToDataUrl(recorder.blob!);
       setMediaUrl(url);
       setMediaMime(recorder.blob!.type || "audio/webm");
@@ -225,13 +234,25 @@ export function CapturePanel({
 
   const applyItemsRef = useRef<(items: IngestItem[]) => void>(() => {});
   applyItemsRef.current = (items: IngestItem[]) => {
-    const usable = items.filter((item) => item.body || item.mediaUrl || item.sourceUrl || item.warning);
+    const hasPayload = (item: IngestItem) => Boolean(item.body || item.mediaUrl || item.sourceUrl || isRichItem(item));
+    const usable = items.filter((item) => hasPayload(item) || item.warning);
     if (!usable.length) return;
     for (const item of usable) {
-      if (item.warning && !item.body && !item.mediaUrl && !item.sourceUrl) toast.error(item.warning);
+      if (item.warning && !hasPayload(item)) toast.error(item.warning);
     }
-    const ready = usable.filter((item) => item.body || item.mediaUrl || item.sourceUrl);
-    if (!ready.length) return;
+    const all = usable.filter(hasPayload);
+    if (!all.length) return;
+    // Digested items (tables, images…) always wait in the queue with their own preview.
+    const rich = all.filter(isRichItem);
+    const ready = all.filter((item) => !isRichItem(item));
+    if (rich.length) {
+      for (const item of rich) if (item.warning) toast.message(item.warning);
+      setQueue((q) => [...q, ...rich]);
+      if (!ready.length) {
+        toast.success(rich.length === 1 ? `Ready to save ${rich[0].mediaName || rich[0].title}` : `${rich.length} files ready to save`);
+        return;
+      }
+    }
 
     if (ready.length === 1 && ready[0].kind === "text" && ready[0].body) {
       const item = ready[0];
@@ -462,10 +483,12 @@ export function CapturePanel({
   }
 
   async function saveAll() {
-    const payloads = [];
-    if (hasContent()) payloads.push(payloadFromForm());
+    type Job = { payload: CreateMemoryInput } | { item: IngestItem };
+    const payloads: Job[] = [];
+    if (hasContent()) payloads.push({ payload: payloadFromForm() });
     for (const item of queue) {
-      if (item.body || item.mediaUrl || item.sourceUrl) payloads.push(payloadFromItem(item));
+      if (isRichItem(item)) payloads.push({ item });
+      else if (item.body || item.mediaUrl || item.sourceUrl) payloads.push({ payload: payloadFromItem(item) });
     }
     if (!payloads.length) {
       toast.error("Nothing to save yet.");
@@ -475,15 +498,24 @@ export function CapturePanel({
     let lastId: string | null = null;
     let failed = 0;
     for (let i = 0; i < payloads.length; i++) {
-      const payload = payloads[i];
-      if (!payload) continue;
+      const job = payloads[i];
+      if (!job) continue;
       try {
-        const res = await createMemory({ data: payload });
+        const res =
+          "item" in job
+            ? await saveIngestItem(job.item, {
+                conceptId: guide?.conceptId ?? null,
+                tags,
+                emoji,
+                color,
+                onProgress: (done, total) => setBatch({ total: payloads.length, done: i, rows: { done, total } }),
+              })
+            : await createMemory({ data: job.payload }).then((r) => (r.ok ? { ok: true as const, memoryId: r.memory.id } : r));
         if (!res.ok) {
           failed += 1;
           toast.error(res.error);
         } else {
-          lastId = res.memory.id;
+          lastId = res.memoryId;
         }
       } catch (err) {
         failed += 1;
@@ -618,11 +650,13 @@ export function CapturePanel({
           </div>
           <ul className="mt-2 space-y-1.5">
             {queue.map((item, i) => (
-              <li key={`${item.mediaName ?? item.title}-${i}`} className="flex items-center justify-between gap-2 text-sm">
-                <span className="min-w-0 truncate text-foreground">
-                  {item.mediaName || item.title || "Untitled"}
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {item.kind}
+              <li key={`${item.mediaName ?? item.title}-${i}`} className="text-sm">
+               <div className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-2 truncate text-foreground">
+                  {item.thumbDataUrl ? <img src={item.thumbDataUrl} alt="" className="size-8 shrink-0 rounded object-cover" /> : null}
+                  <span className="truncate">{item.mediaName || item.title || "Untitled"}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {item.dataset ? "table" : item.viewerType && item.viewerType !== "plain" ? item.viewerType.replace("_", " ") : item.kind}
                     {item.bytes ? ` · ${formatBytes(item.bytes)}` : ""}
                   </span>
                 </span>
@@ -634,6 +668,14 @@ export function CapturePanel({
                 >
                   <X className="size-3.5" />
                 </button>
+               </div>
+                {item.dataset ? (
+                  <DatasetPreviewCard
+                    draft={item.dataset}
+                    disabled={busy}
+                    onChange={(draft) => setQueue((q) => q.map((it, idx) => (idx === i ? { ...it, dataset: draft } : it)))}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -915,7 +957,7 @@ export function CapturePanel({
 
       {queue.length ? (
         <Button className="mt-5 w-full" size="lg" onClick={() => void saveAll()} disabled={busy}>
-          {batch ? `Saving ${batch.done} of ${batch.total}…` : `Save ${queue.length + (hasContent() ? 1 : 0)} into the mesh`}
+          {batch ? `Saving ${Math.min(batch.done + 1, batch.total)} of ${batch.total}${batch.rows ? ` · ${batch.rows.done.toLocaleString()} / ${batch.rows.total.toLocaleString()} rows` : ""}…` : `Save ${queue.length + (hasContent() ? 1 : 0)} into the mesh`}
         </Button>
       ) : (
         <Button className="mt-5 w-full" size="lg" onClick={submit} disabled={busy}>

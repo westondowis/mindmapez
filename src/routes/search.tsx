@@ -33,11 +33,12 @@ function SearchPage() {
   const graph = useQuery({ queryKey: ["graph"], queryFn: () => getGraph() });
   const [query, setQuery] = useState("");
   const [semantic, setSemantic] = useState(true);
+  const [deep, setDeep] = useState(false);
   const search = useMutation({ mutationFn: searchMemories });
 
   function run(q: string) {
     setQuery(q);
-    search.mutate({ data: { query: q, semantic } });
+    search.mutate({ data: { query: q, semantic, deep } });
   }
 
   return (
@@ -72,6 +73,10 @@ function SearchPage() {
         <label className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
           <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />
           Advanced semantic search
+        </label>
+        <label className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+          <input type="checkbox" checked={deep} onChange={(e) => setDeep(e.target.checked)} />
+          Deep search (full text, transcripts and dataset rows)
         </label>
         <div className="mt-4 flex flex-wrap gap-2">
           {EXAMPLES.map((ex) => (

@@ -1,9 +1,14 @@
+import { useQuery } from "@tanstack/react-query";
 import { ChevronUp, FileText, Mic, Paperclip, Pause, Play, Square, Trash2, Check, SquarePen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { formatElapsed, useRecorder } from "@/lib/use-recorder";
-import type { Memory } from "@/lib/types";
+import type { MemorySummary } from "@/lib/types";
+import { ingestFile, MAX_MEDIA_BYTES, type IngestItem } from "@/lib/ingest";
+import { getMemory, getMemoryMedia } from "@/lib/server/memories";
+import { SUPPORTED_ACCEPT } from "@/lib/digestion/sniff";
 import { blobToDataUrl, cn } from "@/lib/utils";
 import { EmojiGlyph } from "@/components/emoji-glyph";
 
@@ -20,9 +25,9 @@ export function RecordDock({
   pathLabel: string;
   onSave: (input: { transcript: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
   onSaveNote: (input: { title: string; body: string }) => void;
-  onSaveFile: (input: { title: string; body?: string; aiSummary?: string; mediaUrl: string; mediaMime: string; mediaName: string }) => void;
+  onSaveFile: (item: IngestItem) => void;
   onOpenMemory?: (id: string) => void;
-  memories?: Memory[];
+  memories?: MemorySummary[];
   onBusyChange?: (busy: boolean) => void;
   pending?: boolean;
 }) {
@@ -56,7 +61,10 @@ export function RecordDock({
 
   async function save() {
     if (!rec.blob) return;
-    const mediaUrl = await blobToDataUrl(rec.blob);
+    // Recordings over the inline cap keep their transcript; the audio itself can't be uploaded.
+    const tooBig = rec.blob.size > MAX_MEDIA_BYTES;
+    if (tooBig) toast.message("This recording is over 3 MB, so only its transcript is saved.");
+    const mediaUrl = tooBig ? "" : await blobToDataUrl(rec.blob);
     onSave({
       transcript: rec.transcript.trim(),
       mediaUrl,
@@ -66,46 +74,22 @@ export function RecordDock({
     rec.reset();
   }
 
-  async function extractText(file: File): Promise<string> {
-    const name = file.name.toLowerCase();
-    if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".csv") || file.type.startsWith("text/")) {
-      return await file.text();
-    }
-    if (name.endsWith(".docx")) {
-      try {
-        const buf = await file.arrayBuffer();
-        const zip = await import("jszip").then((m) => m.default.loadAsync(buf));
-        const xml = await zip.file("word/document.xml")?.async("string");
-        if (!xml) return "";
-        return xml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      } catch {
-        return "";
-      }
-    }
-    return "";
-  }
-
-  function overviewFrom(text: string): string {
-    const sentences = (text.match(/[^.!?]+[.!?]+\s*/g) ?? []).map((s) => s.trim());
-    const first = sentences.slice(0, 3).join(" ");
-    return first.length > 280 ? first.slice(0, 277).trim() + "…" : first || text.slice(0, 180);
-  }
-
   async function onFile(file: File | undefined) {
     if (!file) return;
-    const mediaUrl = await blobToDataUrl(file);
-    const extracted = await extractText(file);
-    const title = file.name.replace(/\.[^.]+$/, "") || "Document";
-    const overview = overviewFrom(extracted);
-    onSaveFile({
-      title,
-      body: extracted || `Document: ${file.name}`,
-      aiSummary: overview || undefined,
-      mediaUrl,
-      mediaMime: file.type || "application/octet-stream",
-      mediaName: file.name,
-    });
-    if (fileRef.current) fileRef.current.value = "";
+    try {
+      // Same unified dispatcher as Capture: tables, images, documents and the rest get their viewer.
+      const item = await ingestFile(file);
+      if (item.warning && !item.body && !item.mediaUrl && !item.dataset && !item.extractedMetadata) {
+        toast.error(item.warning);
+        return;
+      }
+      if (item.warning) toast.message(item.warning);
+      onSaveFile(item);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not read that file");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   const active = saved.find((m) => m.id === tab) ?? null;
@@ -175,17 +159,7 @@ export function RecordDock({
               <SquarePen className="size-4" />
             </button>
           </div>
-          <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-            {active.transcript || active.body}
-          </p>
-          {active.mediaUrl && active.mediaMime?.startsWith("audio/") ? (
-            <audio className="mt-2 w-full" controls src={active.mediaUrl} />
-          ) : null}
-          {active.mediaUrl && !active.mediaMime?.startsWith("audio/") ? (
-            <a href={active.mediaUrl} download={active.mediaName ?? true} className="mt-2 inline-block text-sm text-primary">
-              {active.mediaName || "Open file"}
-            </a>
-          ) : null}
+          <ActiveMemoryPreview summary={active} />
         </div>
       ) : (
         <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
@@ -203,7 +177,7 @@ export function RecordDock({
           ref={fileRef}
           type="file"
           className="hidden"
-          accept=".pdf,.doc,.docx,.txt,.md,.csv,.rtf,image/*,application/pdf"
+          accept={SUPPORTED_ACCEPT}
           onChange={(e) => void onFile(e.target.files?.[0])}
         />
       </div>
@@ -336,5 +310,31 @@ export function RecordDock({
       </div>
       ) : null}
     </div>
+  );
+}
+/** Body/transcript and media load only for the memory being looked at (lightweight graph). */
+function ActiveMemoryPreview({ summary }: { summary: MemorySummary }) {
+  const detail = useQuery({ queryKey: ["memory", summary.id], queryFn: () => getMemory({ data: summary.id }) });
+  const media = useQuery({
+    queryKey: ["memory-media", summary.id],
+    queryFn: () => getMemoryMedia({ data: summary.id }),
+    enabled: summary.hasMedia,
+    staleTime: 5 * 60_000,
+  });
+  const m = detail.data;
+  const mediaUrl = media.data?.mediaUrl ?? null;
+  const mime = summary.mediaMime ?? "";
+  return (
+    <>
+      <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+        {m ? m.transcript || m.body : summary.snippet}
+      </p>
+      {mediaUrl && mime.startsWith("audio/") ? <audio className="mt-2 w-full" controls src={mediaUrl} /> : null}
+      {mediaUrl && !mime.startsWith("audio/") ? (
+        <a href={mediaUrl} download={summary.mediaName ?? true} className="mt-2 inline-block text-sm text-primary">
+          {summary.mediaName || "Open file"}
+        </a>
+      ) : null}
+    </>
   );
 }
