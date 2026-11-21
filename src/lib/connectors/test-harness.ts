@@ -7,6 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { makeSql, type Sql, type TxRunner } from "../sql-template.ts";
 
 const MIGRATIONS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "migrations");
@@ -24,7 +25,7 @@ export function migrationText(name: string) {
 export type TestDb = { pg: PGlite; sql: Sql; transaction: TxRunner; migrate: (upTo?: string) => Promise<void> };
 
 export async function openTestDb(): Promise<TestDb> {
-  const pg = new PGlite();
+  const pg = new PGlite({ extensions: { pg_trgm } });
   await pg.waitReady;
   const sql = makeSql(async <T>(text: string, params: unknown[]) => (await pg.query<T>(text, params)).rows);
   const transaction: TxRunner = (fn) =>
