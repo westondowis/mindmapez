@@ -37,6 +37,7 @@ export const INLINE_DATA_URL_MAX_CHARS = Math.ceil(INLINE_ORIGINAL_MAX_BYTES / 3
 export const ARTIFACT_STATE_MAX_BYTES = 262_144;
 export const EXTRACTED_METADATA_MAX_BYTES = 1_048_576;
 export const THUMB_MAX_CHARS = 24_000;
+export const CHECKLIST_MAX_ITEMS = 500;
 
 export type ChecklistItem = { id: string; text: string; completed: boolean; dueDate?: string };
 export type TranscriptSegment = { startSec: number; endSec: number; text: string; speaker?: string };
@@ -184,6 +185,15 @@ export function validateViewerFields(input: ViewerFieldsInput): ViewerFields {
   const artifactState = asObject(input.artifactState, "Viewer state");
   if (jsonBytes(extractedMetadata) > EXTRACTED_METADATA_MAX_BYTES) throw new Error("Extracted details are larger than 1 MB");
   if (jsonBytes(artifactState) > ARTIFACT_STATE_MAX_BYTES) throw new Error("Viewer state is larger than 256 KB");
+  if (artifactState.items !== undefined) {
+    const items = artifactState.items;
+    if (!Array.isArray(items) || items.length > CHECKLIST_MAX_ITEMS) throw new Error(`A checklist holds at most ${CHECKLIST_MAX_ITEMS} items`);
+    for (const it of items as Record<string, unknown>[]) {
+      if (!it || typeof it !== "object" || typeof it.id !== "string" || typeof it.text !== "string" || typeof it.completed !== "boolean") throw new Error("Checklist items need id, text and completed");
+      if (it.text.length > 1000) throw new Error("Checklist items are limited to 1,000 characters");
+      if (it.dueDate !== undefined && (typeof it.dueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(it.dueDate))) throw new Error("Due dates must be YYYY-MM-DD");
+    }
+  }
   let thumbDataUrl: string | null = null;
   if (typeof input.thumbDataUrl === "string" && input.thumbDataUrl) {
     if (!/^data:image\/(webp|jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(input.thumbDataUrl)) throw new Error("Thumbnail must be a base64 image");
