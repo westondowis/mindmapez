@@ -1473,8 +1473,8 @@ export function MeshCanvas({
         </div>
       ) : null}
       {sortAsk ? (
-        <div className="absolute inset-0 z-40 grid place-items-end bg-background/55 p-4 md:place-items-center">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-soft" role="dialog" aria-labelledby="sort-title">
+        <div className="clear-bottom-nav absolute inset-x-0 top-0 z-40 grid place-items-end bg-background/55 p-4 md:bottom-0 md:place-items-center" onClick={() => setSortAsk(false)}>
+          <div className="max-h-full w-full max-w-sm overflow-y-auto overscroll-contain rounded-2xl border border-border bg-card p-5 shadow-soft" role="dialog" aria-modal="true" aria-labelledby="sort-title" onClick={(e) => e.stopPropagation()}>
             <h2 id="sort-title" className="font-display text-xl">Replace this arrangement?</h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Auto sort throws away the positions you dragged and lays only the branches in the view you are looking at under their parent.

@@ -114,7 +114,7 @@ export function Walkthrough({
   }
 
   return (
-    <div className="absolute inset-0 z-40 grid place-items-end overflow-y-auto bg-background/55 p-4 backdrop-blur-[2px] md:place-items-center">
+    <div className="clear-bottom-nav absolute inset-x-0 top-0 z-40 grid place-items-end overflow-y-auto bg-background/55 p-4 backdrop-blur-[2px] md:bottom-0 md:place-items-center">
       <form
         className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-soft"
         onSubmit={(e) => {
