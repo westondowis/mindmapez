@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Copy, Trash2, X } from "lucide-react";
+import { Copy, Search, Trash2, X } from "lucide-react";
 import { GlyphRow } from "@/components/glyph-controls";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { BRAIN_SECTORS, childrenOf, sectorById, wouldCycle, type BrainSector } f
 import type { Concept } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { emojiText } from "@/lib/custom-emoji";
+import { searchMoveTargets, sectorDisplay } from "@/lib/move-search";
 
 export function BranchSheet({
   branch,
@@ -38,11 +39,23 @@ export function BranchSheet({
   const [sectorId, setSectorId] = useState(branch.sectorId);
   const [parentId, setParentId] = useState<string | null>(branch.parentId);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [moveQuery, setMoveQuery] = useState("");
   const kids = childrenOf(concepts, branch.id);
   const moveTargets = useMemo(
     () => concepts.filter((c) => c.id !== branch.id && !wouldCycle(concepts, branch.id, c.id)),
     [concepts, branch.id],
   );
+  const sectorList = sectors.length ? sectors : BRAIN_SECTORS;
+  const excluded = useMemo(() => {
+    const ids = new Set<string>(concepts.filter((c) => !moveTargets.some((t) => t.id === c.id)).map((c) => c.id));
+    ids.add(branch.id);
+    return ids;
+  }, [concepts, moveTargets, branch.id]);
+  const matches = useMemo(
+    () => searchMoveTargets(moveQuery, sectorList, concepts, excluded, 8),
+    [moveQuery, sectorList, concepts, excluded],
+  );
+  const inSector = useMemo(() => moveTargets.filter((c) => c.sectorId === sectorId), [moveTargets, sectorId]);
   const dirty =
     name !== branch.name ||
     description !== (branch.description || "") ||
@@ -98,6 +111,49 @@ export function BranchSheet({
 
         <hr className="my-6 border-border" />
         <h3 className="font-display text-lg">Move</h3>
+        <label className="mt-3 block text-xs text-muted-foreground" htmlFor="move-search">
+          Search destination (sector, branch or sub-branch)
+        </label>
+        <div className="relative mt-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input
+            id="move-search"
+            data-testid="move-search"
+            className="pl-9"
+            value={moveQuery}
+            onChange={(e) => setMoveQuery(e.target.value)}
+            placeholder="e.g. cerebellum golf"
+            autoComplete="off"
+          />
+        </div>
+        {moveQuery.trim() ? (
+          <ul className="mt-2 max-h-56 overflow-y-auto rounded-md border border-border bg-card" data-testid="move-results">
+            {matches.length ? (
+              matches.map((t) => (
+                <li key={`${t.sectorId}/${t.parentId ?? ""}`}>
+                  <button
+                    type="button"
+                    className="flex min-h-11 w-full flex-col items-start justify-center px-3 py-1.5 text-left text-sm hover:bg-secondary"
+                    onClick={() => {
+                      setSectorId(t.sectorId);
+                      setParentId(t.parentId);
+                      setMoveQuery("");
+                    }}
+                  >
+                    <span className="font-medium">{t.path[t.path.length - 1]}</span>
+                    <span className="text-xs text-muted-foreground">{t.path.join(" › ")}</span>
+                  </button>
+                </li>
+              ))
+            ) : (
+              <li className="px-3 py-2 text-sm text-muted-foreground">No match. Try fewer words.</li>
+            )}
+          </ul>
+        ) : null}
+        <p className="mt-2 text-xs text-muted-foreground" data-testid="move-destination">
+          Destination: {sectorDisplay(sectorById(sectorId, sectors))}
+          {parentId ? ` › ${concepts.find((c) => c.id === parentId)?.name ?? ""}` : " (top level)"}
+        </p>
         <label className="mt-3 block text-xs text-muted-foreground" htmlFor="move-sector">
           Brain sector
         </label>
@@ -110,9 +166,9 @@ export function BranchSheet({
             setParentId(null);
           }}
         >
-          {(sectors.length ? sectors : BRAIN_SECTORS).map((s) => (
+          {sectorList.map((s) => (
             <option key={s.id} value={s.id}>
-              {emojiText(s.emoji)} {s.label}
+              {emojiText(s.emoji)} {sectorDisplay(s)}
             </option>
           ))}
         </select>
@@ -125,10 +181,10 @@ export function BranchSheet({
           value={parentId ?? ""}
           onChange={(e) => setParentId(e.target.value || null)}
         >
-          <option value="">None — primary in {sectorById(sectorId, sectors).label}</option>
-          {moveTargets.map((c) => (
+          <option value="">None — primary in {sectorDisplay(sectorById(sectorId, sectors))}</option>
+          {inSector.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name} ({sectorById(c.sectorId, sectors).label})
+              {c.name}
             </option>
           ))}
         </select>
