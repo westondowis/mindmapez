@@ -5,7 +5,8 @@
 import type { Sql, TxRunner } from "./sql-template.ts";
 import {
   computeTier,
-  extractCandidates,
+  sanitizeGeneratedTags,
+  scoreKeywords,
   normalizeTagName,
   selectAutoTags,
   shouldAutoDelete,
@@ -155,11 +156,11 @@ export async function backfillTags(sql: Sql, userId: string): Promise<number> {
 export async function autoTagText(
   sql: Sql,
   userId: string,
-  input: { text: string; extraCandidates?: string[]; excludeMemoryId?: string; max?: number },
+  input: { text: string; title?: string; extraCandidates?: string[]; excludeMemoryId?: string; max?: number },
 ): Promise<string[]> {
   const text = input.text;
-  const local = extractCandidates(text, 12);
-  const candidates = [...new Set([...(input.extraCandidates ?? []).map(normalizeTagName), ...local])].filter(Boolean).slice(0, 18);
+  const local = scoreKeywords(text, input.title).map((k) => k.word).slice(0, 10);
+  const candidates = [...new Set([...sanitizeGeneratedTags(input.extraCandidates ?? [], 8, text).map(normalizeTagName), ...local])].filter(Boolean).slice(0, 18);
   const known = await sql<{ name: string; tier: TagTier; is_manual_override: boolean }>`
     select name, tier, is_manual_override from tags where user_id = ${userId}
   `;
@@ -182,6 +183,7 @@ export async function autoTagText(
   }
   return selectAutoTags({
     text,
+    title: input.title,
     candidates: safe,
     knownTags,
     branchNames: branches.map((b) => b.name),

@@ -101,6 +101,16 @@ html, body {
   animation: node-pulse 1.8s ease-in-out infinite;
 }
 
+/* Quick-add plus: a slow glow on the same 3.6 s breath as the brain and the neuron somas. */
+@keyframes quick-add-glow {
+  0%, 100% { box-shadow: 0 0 10px 1px rgb(249 197 75 / 35%), 0 0 0 0 rgb(249 197 75 / 30%); }
+  50% { box-shadow: 0 0 26px 6px rgb(249 197 75 / 65%), 0 0 0 10px rgb(249 197 75 / 0%); }
+}
+.quick-add-pulse {
+  animation: quick-add-glow 3.6s ease-in-out infinite;
+}
+.quick-add-pulse:hover, .quick-add-pulse[aria-expanded="true"] { animation-play-state: paused; box-shadow: 0 0 26px 6px rgb(249 197 75 / 65%); }
+
 .brain-depth .react-flow__viewport {
   transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }

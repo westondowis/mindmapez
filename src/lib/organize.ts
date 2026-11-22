@@ -1,3 +1,4 @@
+import { MAX_AUTO_TAGS, sanitizeGeneratedTags, scoreKeywords } from "./tag-intel.ts";
 import {
   CONCEPT_KINDS,
   EMOTIONS,
@@ -109,11 +110,13 @@ export function organizeLocal(raw: string, existingTitle?: string): OrganizeResu
   const impact: ImpactLevel =
     importance >= 5 ? "life_changing" : importance >= 4 ? "high" : importance >= 3 ? "medium" : "low";
 
-  const tags = concepts.map((c) => c.name.toLowerCase()).slice(0, 8);
-  const extra = tokenize(text).filter((t) => t.length > 5).slice(0, 4);
-  for (const t of extra) {
-    if (!tags.includes(t)) tags.push(t);
-  }
+  // At most MAX_AUTO_TAGS, best first: categories the text really matched, then ranked topical keywords.
+  const matched = concepts.filter((c) => includesAny(lower, CATEGORIES.find((x) => x.name === c.name)?.words ?? []));
+  const tags = sanitizeGeneratedTags(
+    [...matched.map((c) => c.name.toLowerCase()).slice(0, 2), ...scoreKeywords(text, existingTitle ?? "").map((k) => k.word)],
+    MAX_AUTO_TAGS,
+    text,
+  );
 
   const first = text.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ");
   const summary = first.length > 220 ? `${first.slice(0, 217).trim()}…` : first || text.slice(0, 180);
@@ -121,7 +124,7 @@ export function organizeLocal(raw: string, existingTitle?: string): OrganizeResu
   return {
     title: existingTitle?.trim() || titleFromBody(text),
     summary,
-    tags: tags.slice(0, 10),
+    tags,
     emotion,
     importance,
     impact,
@@ -159,7 +162,7 @@ export function parseOrganizeJson(raw: string, fallback: OrganizeResult): Organi
     return {
       title: parsed.title?.trim() || fallback.title,
       summary: parsed.summary?.trim() || fallback.summary,
-      tags: Array.isArray(parsed.tags) ? parsed.tags.map(String).slice(0, 12) : fallback.tags,
+      tags: Array.isArray(parsed.tags) ? sanitizeGeneratedTags(parsed.tags.map(String), MAX_AUTO_TAGS) : fallback.tags,
       emotion,
       importance: Math.max(1, Math.min(5, Number(parsed.importance) || fallback.importance)),
       impact,

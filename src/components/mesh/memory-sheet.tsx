@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Mic, Pencil, Square, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -34,13 +34,99 @@ export function MemorySheet({
   const titleValue = title ?? m?.title ?? "";
   const bodyValue = body ?? m?.body ?? "";
   const overviewValue = overview ?? m?.aiSummary ?? "";
+  const [more, setMore] = useState("");
+  const [listening, setListening] = useState(false);
+  const [confirmExit, setConfirmExit] = useState<null | "close" | "done">(null);
+  const recRef = useRef<{ stop: () => void } | null>(null);
+  const dirty =
+    !!m &&
+    editing &&
+    ((title !== null && title.trim() !== m.title) ||
+      (body !== null && body !== m.body) ||
+      (overview !== null && overview !== (m.aiSummary ?? "")) ||
+      more.trim().length > 0);
+
+  const stopDictation = () => {
+    try {
+      recRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    recRef.current = null;
+    setListening(false);
+  };
+  const startDictation = () => {
+    if (typeof window === "undefined") return;
+    const w = window as unknown as { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) return;
+    try {
+      const rec = new Ctor();
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.lang = "en-US";
+      rec.onresult = (ev: any) => {
+        let text = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          if (ev.results[i].isFinal) text += ev.results[i][0].transcript;
+        }
+        if (text.trim()) setMore((prev) => (prev ? `${prev.replace(/\s+$/, "")} ` : "") + text.trim());
+      };
+      rec.onend = () => setListening(false);
+      rec.onerror = () => setListening(false);
+      recRef.current = rec;
+      rec.start();
+      setListening(true);
+    } catch {
+      setListening(false);
+    }
+  };
+  const canDictate =
+    typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
   useEffect(() => {
     setTitle(null);
     setBody(null);
     setOverview(null);
     setEditing(false);
+    setMore("");
+    setConfirmExit(null);
+    stopDictation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memoryId]);
+
+  useEffect(() => () => stopDictation(), []);
+
+  // Browser/tab close guard while there are unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const h = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [dirty]);
+
+  const discard = () => {
+    setTitle(null);
+    setBody(null);
+    setOverview(null);
+    setMore("");
+    stopDictation();
+  };
+  const requestClose = () => {
+    if (dirty) setConfirmExit("close");
+    else onClose();
+  };
+  const requestDone = () => {
+    if (!editing) {
+      setEditing(true);
+      return;
+    }
+    if (dirty) setConfirmExit("done");
+    else setEditing(false);
+  };
 
   const save = useMutation({
     mutationFn: updateMemory,
@@ -49,6 +135,26 @@ export function MemorySheet({
       void qc.invalidateQueries({ queryKey: ["graph"] });
     },
   });
+  const saveAll = () => {
+    if (!m || !dirty) return;
+    stopDictation();
+    const nextBody = more.trim()
+      ? `${bodyValue.replace(/\s+$/, "")}${bodyValue.trim() ? "\n\n" : ""}${more.trim()}`
+      : bodyValue;
+    const data: { id: string; title?: string; body?: string; aiSummary?: string } = { id: m.id };
+    if (title !== null && title.trim() && title.trim() !== m.title) data.title = title.trim();
+    if (nextBody !== m.body) data.body = nextBody;
+    if (overview !== null && overview !== (m.aiSummary ?? "")) data.aiSummary = overview;
+    save.mutate(
+      { data },
+      {
+        onSuccess: () => {
+          discard();
+          setConfirmExit(null);
+        },
+      },
+    );
+  };
   const suggest = useMutation({
     mutationFn: suggestMemoryTags,
     onSuccess: (res) => {
@@ -71,21 +177,51 @@ export function MemorySheet({
       className="absolute inset-0 z-[29] bg-transparent"
       onPointerDown={(e) => {
         e.stopPropagation();
-        onClose();
+        requestClose();
       }}
     />
     <aside onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} className="clear-bottom-nav absolute inset-x-0 z-30 flex max-h-[min(72dvh,36rem)] w-full flex-col rounded-t-2xl border border-border bg-background/96 shadow-soft backdrop-blur-md md:inset-y-0 md:bottom-0 md:right-0 md:left-auto md:max-h-none md:max-w-md md:rounded-none md:border-y-0 md:border-r-0">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-primary">{editing ? "Edit memory" : "Memory"}</p>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={() => setEditing((v) => !v)} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label={editing ? "Done editing" : "Edit memory"}>
+          <button type="button" onClick={requestDone} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label={editing ? "Done editing" : "Edit memory"}>
             <Pencil className="size-4" />
           </button>
-          <button type="button" onClick={onClose} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Close">
+          <button type="button" onClick={requestClose} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Close">
           <X className="size-5" />
         </button>
         </div>
       </div>
+      {editing && m ? (
+        <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2" data-testid="memory-save-top">
+          <span className="text-xs text-muted-foreground">{dirty ? "Unsaved changes" : "No changes"}</span>
+          <Button size="sm" disabled={!dirty || save.isPending} onClick={saveAll} data-testid="memory-save-top-btn">
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      ) : null}
+      {confirmExit ? (
+        <div role="alertdialog" aria-label="Unsaved changes" data-testid="memory-exit-confirm" className="border-b border-border bg-secondary px-4 py-3">
+          <p className="text-sm text-foreground">You have unsaved changes. Exit without saving?</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" onClick={saveAll}>Save and exit</Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                const target = confirmExit;
+                discard();
+                setConfirmExit(null);
+                if (target === "close") onClose();
+                else setEditing(false);
+              }}
+            >
+              Exit without saving
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmExit(null)}>Keep editing</Button>
+          </div>
+        </div>
+      ) : null}
       <div className="flex-1 overflow-y-auto px-5 py-5">
         {q.isPending || !m ? (
           <div className="space-y-3">
@@ -106,10 +242,6 @@ export function MemorySheet({
                     className="mt-1"
                     value={titleValue}
                     onChange={(e) => setTitle(e.target.value)}
-                    onBlur={() => {
-                      const next = titleValue.trim();
-                      if (next && next !== m.title) save.mutate({ data: { id: m.id, title: next } });
-                    }}
                   />
                 </label>
                 <label className="mt-3 block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
@@ -118,9 +250,6 @@ export function MemorySheet({
                     className="mt-1 max-h-28 min-h-16 overflow-y-auto"
                     value={overviewValue}
                     onChange={(e) => setOverview(e.target.value)}
-                    onBlur={() => {
-                      if (overviewValue !== (m.aiSummary ?? "")) save.mutate({ data: { id: m.id, aiSummary: overviewValue } });
-                    }}
                     placeholder="A short overview of this memory"
                   />
                 </label>
@@ -130,11 +259,35 @@ export function MemorySheet({
                     className="mt-1 max-h-48 min-h-28 overflow-y-auto"
                     value={bodyValue}
                     onChange={(e) => setBody(e.target.value)}
-                    onBlur={() => {
-                      if (bodyValue !== m.body) save.mutate({ data: { id: m.id, body: bodyValue } });
-                    }}
                   />
                 </label>
+                <div className="mt-3">
+                  <label className="block text-[11px] uppercase tracking-[0.16em] text-muted-foreground" htmlFor="memory-more">
+                    Add more to this memory
+                  </label>
+                  <Textarea
+                    id="memory-more"
+                    data-testid="memory-more"
+                    className="mt-1 max-h-40 min-h-20 overflow-y-auto"
+                    value={more}
+                    onChange={(e) => setMore(e.target.value)}
+                    placeholder="Type or dictate more. It is appended when you save."
+                  />
+                  {canDictate ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="mt-1 min-h-11 gap-2"
+                      data-testid="memory-dictate"
+                      aria-pressed={listening}
+                      onClick={listening ? stopDictation : startDictation}
+                    >
+                      {listening ? <Square className="size-4" /> : <Mic className="size-4" />}
+                      {listening ? "Stop dictating" : "Dictate more"}
+                    </Button>
+                  ) : null}
+                </div>
               </>
             ) : (
               <>
@@ -245,6 +398,13 @@ export function MemorySheet({
           </>
         )}
       </div>
+      {editing && m ? (
+        <div className="border-t border-border bg-background/96 px-4 py-3" data-testid="memory-save-bottom">
+          <Button className="w-full min-h-11" disabled={!dirty || save.isPending} onClick={saveAll}>
+            {save.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      ) : null}
     </aside>
     </>
   );

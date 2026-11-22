@@ -10,6 +10,12 @@ export type TagTier = "primary" | "secondary";
 export const MIN_TAG_LENGTH = 3;
 /** A new auto tag needs this many distinct items (memories or branches) mentioning it. */
 export const MIN_RECURRENCE = 2;
+/** Automatic tagging never proposes more than this many tags; the user adds or removes the rest. */
+export const MAX_AUTO_TAGS = 4;
+/** A new auto keyword must score at least this (see scoreKeywords) to be considered. */
+export const MIN_KEYWORD_SCORE = 3.5;
+/** New auto keywords are at least this long (3-letter ones only as ALL-CAPS acronyms). */
+export const MIN_AUTO_LENGTH = 4;
 /** Auto-promotion to primary: this many distinct items ... */
 export const PRIMARY_ITEMS = 5;
 /** ... or this many different branches / sectors. */
@@ -87,11 +93,104 @@ export function mentions(text: string, phrase: string): boolean {
   return new RegExp(`(?:^|[^a-z0-9])${esc}s?(?:$|[^a-z0-9])`, "i").test(text);
 }
 
+export type KeywordScore = { word: string; score: number };
+
+const SENTENCE_SPLIT = /(?<=[.!?])\s+|\n+/;
+
+/**
+ * Rank the words of a text by how likely they are to be its topic keywords. A word is only a candidate
+ * if it passes the blocklist, is at least MIN_AUTO_LENGTH letters (or an ALL-CAPS acronym), and is
+ * not a contraction fragment. Score builds a hierarchy: title > first sentence > repeated > proper
+ * noun > long word, with penalties for adverbs and -ing/-ed forms (usually verbs, not topics).
+ * Capitalised neighbours ("Seller Financing") are offered as one phrase.
+ * @param {string} text Memory text (body, transcript, summary).
+ * @param {string} [title] Memory title; words in it get the biggest boost.
+ * @returns {KeywordScore[]} Eligible words/phrases scoring >= MIN_KEYWORD_SCORE, best first.
+ */
+export function scoreKeywords(text: string, title = ""): KeywordScore[] {
+  // "John's" -> "John"; any other contraction fragment ("don't", "it's" -> it) is dropped whole.
+  const strip = (t: string) => t.replace(/\b[\w-]+['\u2019][\w']+\b/g, (m) => (/['\u2019]s$/i.test(m) ? m.replace(/['\u2019]s$/i, "") : " "));
+  const titleWords = new Set((strip(title).match(/[A-Za-z][A-Za-z0-9-]*/g) ?? []).map((w) => w.toLowerCase()));
+  type Entry = { count: number; first: number; proper: boolean };
+  const entries = new Map<string, Entry>();
+  const phrases = new Map<string, { a: string; b: string; first: number }>();
+  const sentences = strip(text).split(SENTENCE_SPLIT).filter(Boolean);
+  const eligible = (w: string, raw: string) => {
+    if (isBlockedTag(w)) return false;
+    return w.length >= MIN_AUTO_LENGTH || (raw.length >= 3 && raw === raw.toUpperCase() && /^[A-Z]+$/.test(raw));
+  };
+  sentences.forEach((sentence, si) => {
+    const toks = [...sentence.matchAll(/[A-Za-z][A-Za-z0-9-]*/g)];
+    toks.forEach((m, ti) => {
+      const raw = m[0];
+      const w = raw.toLowerCase();
+      if (!eligible(w, raw)) return;
+      const acronym = raw.length >= 3 && raw === raw.toUpperCase();
+      const proper = acronym || (ti > 0 && /^[A-Z]/.test(raw));
+      const e = entries.get(w) ?? { count: 0, first: si, proper: false };
+      e.count++;
+      e.proper = e.proper || proper;
+      entries.set(w, e);
+      const next = toks[ti + 1];
+      if (next && /^[A-Z]/.test(raw) && /^[A-Z]/.test(next[0]) && next.index === (m.index ?? 0) + raw.length + 1) {
+        const nw = next[0].toLowerCase();
+        if (eligible(nw, next[0])) phrases.set(`${w} ${nw}`, { a: w, b: nw, first: si });
+      }
+    });
+  });
+  const score = (w: string, e: Entry): number => {
+    let sc = Math.min(e.count, 4) * 1.5;
+    if (titleWords.has(w)) sc += 4;
+    if (e.first === 0) sc += 2;
+    if (e.proper) sc += 3;
+    if (w.length >= 7) sc += 1;
+    if (/ly$/.test(w)) sc -= 4;
+    if (/(?:ing|ed)$/.test(w) && !titleWords.has(w) && !e.proper) sc -= 2;
+    return sc;
+  };
+  const out: KeywordScore[] = [];
+  const single = new Map<string, number>();
+  for (const [w, e] of entries) {
+    const sc = score(w, e);
+    single.set(w, sc);
+    if (sc >= MIN_KEYWORD_SCORE) out.push({ word: w, score: sc });
+  }
+  for (const [phrase, p] of phrases) {
+    const a = single.get(p.a) ?? 0;
+    const b = single.get(p.b) ?? 0;
+    if (a >= MIN_KEYWORD_SCORE - 1 && b >= MIN_KEYWORD_SCORE - 1) out.push({ word: phrase, score: (a + b) / 2 + 2 });
+  }
+  return out.sort((x, y) => y.score - x.score || y.word.length - x.word.length);
+}
+
+/**
+ * Clean a tag list produced by an LLM or a heuristic: no filler, stopwords, contraction fragments
+ * or tiny tokens; tags that really occur in `text` rank first; at most `max` come back.
+ * @param {string[]} tags Proposed tags.
+ * @param {number} [max] Cap (default MAX_AUTO_TAGS).
+ * @param {string} [text] Source text used to prefer tags the memory actually mentions.
+ */
+export function sanitizeGeneratedTags(tags: string[], max = MAX_AUTO_TAGS, text = ""): string[] {
+  const seen = new Set<string>();
+  const kept: { tag: string; hit: boolean }[] = [];
+  for (const raw of tags) {
+    const tag = String(raw).trim().replace(/^#+/, "").trim();
+    const key = normalizeTagName(tag);
+    if (!key || seen.has(key) || /['\u2019]/.test(tag)) continue;
+    if (isBlockedTag(key)) continue;
+    seen.add(key);
+    kept.push({ tag, hit: text ? mentions(text, key) : false });
+  }
+  return [...kept.filter((k) => k.hit), ...kept.filter((k) => !k.hit)].slice(0, max).map((k) => k.tag);
+}
+
 export type KnownTag = { name: string; tier: TagTier; manual: boolean };
 
 export type AutoTagInput = {
   /** The memory's text (title, body, summary, transcript). */
   text: string;
+  /** The memory's title (its words rank highest). */
+  title?: string;
   /** Candidates from any extractor (local counts, an LLM); every one is still gated. */
   candidates: string[];
   /** The user's existing tags, both tiers. */
@@ -113,29 +212,33 @@ export type AutoTagInput = {
  * @returns Lowercase tag names, existing ones first, de-duplicated.
  */
 export function selectAutoTags(input: AutoTagInput): string[] {
-  const max = input.max ?? 8;
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const add = (n: string) => {
-    const k = normalizeTagName(n);
-    if (!k || seen.has(k) || out.length >= max) return;
-    seen.add(k);
-    out.push(k);
+  const max = Math.min(input.max ?? MAX_AUTO_TAGS, MAX_AUTO_TAGS);
+  const scored = new Map<string, number>();
+  const put = (name: string, score: number) => {
+    const k = normalizeTagName(name);
+    if (!k) return;
+    if (!scored.has(k) || scored.get(k)! < score) scored.set(k, score);
   };
   for (const t of input.knownTags) {
     if (!t.manual && isBlockedTag(t.name)) continue; // a stale auto tag that is now filler stays out
-    if (mentions(input.text, t.name)) add(t.name);
+    if (mentions(input.text, t.name)) put(t.name, 30 + (t.tier === "primary" ? 3 : 0) + (t.manual ? 2 : 0));
   }
   for (const name of input.branchNames) {
     if (isBlockedTag(name)) continue;
-    if (mentions(input.text, name)) add(name);
+    if (mentions(input.text, name)) put(name, 20);
   }
+  // New keywords: must really be topical in THIS text (ranked), and recur elsewhere in the brain.
+  const topical = new Map(scoreKeywords(input.text, input.title).map((k) => [k.word, k.score]));
   for (const c of input.candidates) {
     const k = normalizeTagName(c);
-    if (!k || seen.has(k) || isBlockedTag(k)) continue;
-    if (1 + input.recurrence(k) >= MIN_RECURRENCE) add(k);
+    if (!k || scored.has(k) || isBlockedTag(k)) continue;
+    const base = topical.get(k);
+    if (base === undefined) continue;
+    const rec = input.recurrence(k);
+    if (1 + rec < MIN_RECURRENCE) continue;
+    put(k, base + Math.min(rec, 3));
   }
-  return out;
+  return [...scored.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([n]) => n);
 }
 
 /**

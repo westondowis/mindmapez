@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { FileText, ImageIcon, Link2, Mic, Table2, Type, Video } from "lucide-react";
+import { FileText, ImageIcon, Link2, Mic, Network, Table2, Type, Video } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { KIND_LABEL, KIND_TONE } from "@/lib/kind-styles";
 import type { MemorySummary } from "@/lib/types";
@@ -21,6 +21,7 @@ const TYPE_ICON = {
 export function MemoryCard({ memory }: { memory: MemorySummary }) {
   const Icon = TYPE_ICON[memory.memoryType] ?? Type;
   return (
+    <div>
     <Link
       to="/memory/$id"
       params={{ id: memory.id }}
@@ -53,5 +54,13 @@ export function MemoryCard({ memory }: { memory: MemorySummary }) {
         ) : null}
       </div>
     </Link>
+    <Link
+      to="/"
+      search={{ focus: memory.id, focusType: "memory" }}
+      className="mt-1 inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-xs text-primary hover:underline"
+    >
+      <Network className="size-3.5" aria-hidden /> Show in mesh
+    </Link>
+    </div>
   );
 }

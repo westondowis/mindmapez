@@ -32,23 +32,23 @@ export const getDashboard = createServerFn({ method: "GET" })
     const conn = await sql<{ n: number }>`
       select count(*)::int as n from connections where user_id = ${context.userId} and status = 'accepted'
     `;
-    const topics = await sql<{ name: string; count: number }>`
-      select c.name, count(*)::int as count
+    const topics = await sql<{ id: string; name: string; count: number }>`
+      select c.id, c.name, count(*)::int as count
       from memory_concepts mc
       join concepts c on c.id = mc.concept_id
       where mc.user_id = ${context.userId}
-      group by c.name
+      group by c.id, c.name
       order by count desc
       limit 6
     `;
     const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
-    const growing = await sql<{ name: string; count: number }>`
-      select c.name, count(*)::int as count
+    const growing = await sql<{ id: string; name: string; count: number }>`
+      select c.id, c.name, count(*)::int as count
       from memory_concepts mc
       join concepts c on c.id = mc.concept_id
       join memories m on m.id = mc.memory_id
       where mc.user_id = ${context.userId} and m.created_at > ${since}
-      group by c.name
+      group by c.id, c.name
       order by count desc
       limit 5
     `;

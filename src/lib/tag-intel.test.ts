@@ -92,3 +92,56 @@ describe("computeTier", () => {
     assert.equal(shouldAutoDelete({ manual: false, items: 1 }), false);
   });
 });
+
+import { MAX_AUTO_TAGS, sanitizeGeneratedTags, scoreKeywords } from "./tag-intel.ts";
+
+describe("scoreKeywords (strict ranking)", () => {
+  const text = "Negotiations with Marisa went well. It's the vacant land call script that really matters. We should keep the script simple and ask about financing.";
+  const ranked = scoreKeywords(text, "Vacant land call script").map((k) => k.word);
+  it("never returns contraction fragments, articles or fillers", () => {
+    for (const bad of ["it's", "its", "the", "that", "really", "should", "about", "keep", "with", "went", "well", "ask"]) assert.ok(!ranked.includes(bad), bad);
+  });
+  it("ranks title words and proper nouns first", () => {
+    assert.ok(ranked.includes("script"));
+    assert.ok(ranked.indexOf("script") < ranked.indexOf("financing") || !ranked.includes("financing"));
+    assert.ok(ranked.includes("marisa"));
+  });
+  it("drops weak one-off words from later sentences", () => assert.ok(!ranked.includes("simple")));
+  it("offers capitalised neighbours as one phrase", () => {
+    const r = scoreKeywords("Notes on Seller Financing today. Seller Financing deals need a down payment.", "").map((k) => k.word);
+    assert.ok(r.includes("seller financing"));
+  });
+  it("keeps 3-letter acronyms only in capitals", () => {
+    assert.ok(scoreKeywords("Check the SEO plan for the site. SEO matters.", "SEO plan").some((k) => k.word === "seo"));
+    assert.ok(!scoreKeywords("the cat sat on the mat. cat naps.", "").some((k) => k.word === "cat"));
+  });
+});
+
+describe("sanitizeGeneratedTags", () => {
+  it("removes filler, contractions and tiny tokens and caps at 4", () => {
+    const out = sanitizeGeneratedTags(["it's", "the", "golf", "thing", "ab", "Seller Financing", "regarding", "irons", "putting", "driver"]);
+    assert.deepEqual(out, ["golf", "Seller Financing", "irons", "putting"]);
+  });
+  it("prefers tags the text actually mentions", () => {
+    const out = sanitizeGeneratedTags(["confidence", "golf", "mindset"], 2, "My golf swing needs work");
+    assert.equal(out[0], "golf");
+    assert.equal(out.length, 2);
+  });
+});
+
+describe("selectAutoTags cap", () => {
+  it("never returns more than MAX_AUTO_TAGS and ranks existing tags first", () => {
+    const text = "Golf irons driver putting wedges chipping. Golf practice with irons and driver.";
+    const out = selectAutoTags({
+      text,
+      title: "Golf irons driver",
+      candidates: ["golf", "irons", "driver", "putting", "wedges", "chipping", "practice"],
+      knownTags: [{ name: "wedges", tier: "primary", manual: true }],
+      branchNames: ["Golf"],
+      recurrence: () => 3,
+      max: 10,
+    });
+    assert.equal(out.length, MAX_AUTO_TAGS);
+    assert.deepEqual(out.slice(0, 2), ["wedges", "golf"]);
+  });
+});

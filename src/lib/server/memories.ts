@@ -175,6 +175,7 @@ export async function createMemoryForUser(sql: Sql, userId: string, data: Create
           ? normalizeTags(data.tags)
           : await autoTagText(sql, context.userId, {
               text: raw || transcript || title,
+              title,
               extraCandidates: organized.tags,
             });
       const tags = JSON.stringify(tagList);
@@ -506,7 +507,8 @@ export const suggestMemoryTags = createServerFn({ method: "POST" })
       extraCandidates: proposed,
       excludeMemoryId: data.memoryId,
     });
-    return { tags: mergeTags(kept, tags) };
+    // A regenerate is a fresh, short proposal (max 4); the user edits from there.
+    return { tags: (tags.length ? tags : kept).slice(0, 4) };
   });
 
 /**

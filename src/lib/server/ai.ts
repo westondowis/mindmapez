@@ -1,4 +1,5 @@
 import { organizeLocal, parseOrganizeJson } from "@/lib/organize";
+import { MAX_AUTO_TAGS, sanitizeGeneratedTags } from "@/lib/tag-intel";
 import type { OrganizeResult } from "@/lib/types";
 
 export type LlmConfig = { apiKey: string; baseUrl: string; model: string };
@@ -84,7 +85,7 @@ export async function suggestTags(raw: string, existing: string[] = []): Promise
       {
         role: "system",
         content:
-          'You tag a personal memory for a second-brain graph. Return ONLY JSON {"tags": string[]} with 4-10 short tags. Prefer durable topics (Golf, Seller Financing, Confidence) over filler words. Mix specific nouns with themes. Do not repeat near-duplicates.',
+          'You tag a personal memory for a second-brain graph. Return ONLY JSON {"tags": string[]} with AT MOST 4 tags, most important first. Each tag is a concrete noun or short noun phrase the text is really about (Golf, Seller Financing, Negotiation). Never use filler, verbs, adjectives, pronouns or contractions. Fewer is better than weak.',
       },
       {
         role: "user",
@@ -98,7 +99,7 @@ export async function suggestTags(raw: string, existing: string[] = []): Promise
     const match = result.text.match(/\{[\s\S]*\}/);
     const parsed = JSON.parse(match?.[0] ?? "{}") as { tags?: unknown };
     if (!Array.isArray(parsed.tags)) return fallback;
-    const tags = parsed.tags.map(String);
+    const tags = sanitizeGeneratedTags(parsed.tags.map(String), MAX_AUTO_TAGS, raw);
     return tags.length ? tags : fallback;
   } catch {
     return fallback;

@@ -74,11 +74,14 @@ export function CapturePanel({
   defaultMode = "voice",
   guide,
   seed,
+  target,
 }: {
   onCreated?: (id: string) => void;
   defaultMode?: Mode;
   guide?: CaptureGuide;
   seed?: CaptureSeed;
+  /** Quick add: file the memory on this branch (null conceptId = let the app file it) and say where. */
+  target?: { conceptId: string | null; label: string };
 }) {
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>(defaultMode);
@@ -443,7 +446,7 @@ export function CapturePanel({
       tags,
       sourceUrl: sourceUrl.trim() || (isBareUrl(body) ? body.trim() : null),
       sourceKind,
-      conceptId: guide?.conceptId ?? null,
+      conceptId: guide?.conceptId ?? target?.conceptId ?? null,
     };
   }
 
@@ -462,7 +465,7 @@ export function CapturePanel({
       tags,
       sourceUrl: item.sourceUrl,
       sourceKind: item.kind === "link" ? sourceKind : null,
-      conceptId: guide?.conceptId ?? null,
+      conceptId: guide?.conceptId ?? target?.conceptId ?? null,
     };
   }
 
@@ -553,6 +556,11 @@ export function CapturePanel({
 
   return (
     <div className="mx-auto w-full max-w-xl">
+      {target && !guide ? (
+        <p className="mb-3 text-sm text-muted-foreground" data-testid="capture-target">
+          Adding to <span className="text-foreground">{target.label}</span>
+        </p>
+      ) : null}
       {guide ? (
         <p className="mb-4 text-sm text-muted-foreground">
           This node will live on <span className="text-foreground">{guide.mapName}</span>. Pick how you

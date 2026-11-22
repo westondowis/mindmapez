@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { MemoryCard } from "@/components/memory-card";
 import { PageHeader } from "@/components/page-header";
@@ -71,9 +72,8 @@ function DashboardPage() {
                 <h2 className="font-display text-xl">Most active topics</h2>
                 <ul className="mt-4 space-y-3">
                   {d.topTopics.map((t) => (
-                    <li key={t.name} className="flex items-center justify-between text-sm">
-                      <span>{t.name}</span>
-                      <span className="tabular-nums text-muted-foreground">{t.count}</span>
+                    <li key={t.id}>
+                      <TopicLink id={t.id} name={t.name} value={String(t.count)} />
                     </li>
                   ))}
                 </ul>
@@ -83,9 +83,8 @@ function DashboardPage() {
                 <ul className="mt-4 space-y-3">
                   {d.growingConcepts.length ? (
                     d.growingConcepts.map((t) => (
-                      <li key={t.name} className="flex items-center justify-between text-sm">
-                        <span>{t.name}</span>
-                        <span className="tabular-nums text-muted-foreground">+{t.count}</span>
+                      <li key={t.id}>
+                        <TopicLink id={t.id} name={t.name} value={`+${t.count}`} />
                       </li>
                     ))
                   ) : (
@@ -162,5 +161,24 @@ function DashboardPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+
+/** A topic row that opens the mesh on that branch (sector, branch path and its memories). */
+function TopicLink({ id, name, value }: { id: string; name: string; value: string }) {
+  return (
+    <Link
+      to="/"
+      search={{ focus: id, focusType: "branch" }}
+      aria-label={`Open ${name} in the mesh`}
+      className="-mx-2 flex min-h-11 items-center justify-between gap-3 rounded-lg px-2 text-sm hover:bg-secondary focus-visible:bg-secondary"
+    >
+      <span className="min-w-0 truncate underline-offset-4 hover:underline">{name}</span>
+      <span className="flex shrink-0 items-center gap-2 tabular-nums text-muted-foreground">
+        {value}
+        <ChevronRight className="size-4" aria-hidden />
+      </span>
+    </Link>
   );
 }

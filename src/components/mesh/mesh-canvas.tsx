@@ -52,6 +52,8 @@ import {
 } from "@/lib/server/branches";
 import { createMemory, savePositions } from "@/lib/server/memories";
 import { layoutAnchoredMemories, memoriesForBranch } from "@/lib/branch-memories";
+import { QuickAdd } from "@/components/mesh/quick-add";
+import { levelLabel } from "@/lib/quick-add-level";
 import type { Concept, GraphPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { IngestItem } from "@/lib/ingest";
@@ -1335,6 +1337,18 @@ export function MeshCanvas({
             Edit {selectedConcept.name}
           </Button>
         </BranchDetailOverlay>
+      ) : null}
+
+      {showFlow && !touring && sectorId ? (
+        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 z-30", "top-48 md:top-36")}>
+          <div className="pointer-events-auto absolute right-0 top-0 h-0 w-0">
+            <QuickAdd
+              key={`${sectorId}/${branchId ?? ""}`}
+              conceptId={branchId && graph.concepts.some((c) => c.id === branchId) ? branchId : null}
+              label={levelLabel(graph.concepts, sectorById(sectorId, sectors).label, branchId)}
+            />
+          </div>
+        </div>
       ) : null}
 
       {!showFlow && !touring ? (

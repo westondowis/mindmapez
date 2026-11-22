@@ -161,8 +161,8 @@ export type DashboardStats = {
   voiceCount: number;
   connectionCount: number;
   photoCount: number;
-  topTopics: { name: string; count: number }[];
-  growingConcepts: { name: string; count: number }[];
+  topTopics: { id: string; name: string; count: number }[];
+  growingConcepts: { id: string; name: string; count: number }[];
   topEmotions: { name: string; count: number }[];
   recent: MemorySummary[];
   favorites: MemorySummary[];
