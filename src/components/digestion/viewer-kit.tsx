@@ -76,6 +76,21 @@ export function useArtifactState<T extends JsonObject>(memory: Memory) {
     [flush],
   );
 
+  // Mobile Safari/PWA can suspend a backgrounded page without unmounting it: save pending edits then.
+  useEffect(() => {
+    const onHide = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") return;
+      if (timer.current) clearTimeout(timer.current);
+      void flush();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onHide);
+    };
+  }, [flush]);
+
   return { state, update, saving };
 }
 
