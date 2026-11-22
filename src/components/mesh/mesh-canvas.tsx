@@ -62,6 +62,7 @@ import { memoryContentLength, synapseLayout } from "@/lib/synapse";
 import {
   BRANCH_RADIUS,
   SAFE_MARGIN,
+  MIN_FAN_SIDE,
   bowSideFor,
   getMemoryCellCount,
   memoryNodeOrigin,
@@ -473,8 +474,10 @@ function toBranchElements(
     radius: BRANCH_RADIUS,
     angleDeg: angles[i]!,
     cellCount: getMemoryCellCount(memoryContentLength(m) || (m.title?.length ?? 0)),
-    minX: safeX?.minX,
-    maxX: safeX?.maxX,
+    // The measured band can be stale or squeezed mid-animation; never let it pinch the fan closer
+    // than MIN_FAN_SIDE to the hub, or every axon stacks into one overlapping column.
+    minX: safeX ? Math.min(safeX.minX, ringCenter.x - MIN_FAN_SIDE) : undefined,
+    maxX: safeX ? Math.max(safeX.maxX, ringCenter.x + MIN_FAN_SIDE) : undefined,
     bowSide: bowSideFor(angles[i]!, i),
     tier: tierFor(i),
   }));

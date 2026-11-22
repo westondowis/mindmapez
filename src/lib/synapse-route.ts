@@ -18,6 +18,8 @@ export const FORK_LEN = 18;
 export const BRANCH_RADIUS = 34;
 /** Soma keeps this far from the left and right viewport edges. */
 export const SAFE_MARGIN = 44;
+/** Neuron somas may always fan at least this far (flow px) to each side of the branch hub. */
+export const MIN_FAN_SIDE = 170;
 /** Characters on a standard page. */
 export const CHARS_PER_PAGE = 3000;
 export const MIN_CELLS = 3;
