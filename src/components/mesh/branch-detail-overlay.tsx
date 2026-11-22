@@ -52,7 +52,7 @@ export function BranchDetailOverlay({
           onPointerDown={(event) => event.stopPropagation()}
           aria-expanded={false}
           aria-label={`Show details for ${branch.name}`}
-          className="pointer-events-auto absolute right-3 top-[calc(12rem+4.75rem)] flex min-h-11 max-w-[60vw] items-center gap-1.5 rounded-full border border-border bg-background/90 px-3 text-sm shadow-soft backdrop-blur-md md:top-[calc(9rem+4.75rem)]"
+          className="pointer-events-auto absolute right-3 top-[calc(8.75rem+4.75rem)] flex min-h-11 max-w-[60vw] items-center gap-1.5 rounded-full border border-border bg-background/90 px-3 text-sm shadow-soft backdrop-blur-md md:top-[calc(9rem+4.75rem)]"
         >
           <span className="truncate"><EmojiGlyph value={branch.emoji} /> {branch.name}</span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />

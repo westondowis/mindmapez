@@ -296,6 +296,7 @@ function toBranchElements(
   sectors: BrainSector[],
   memory: { openId: string | null; onEdit: (id: string) => void; onDismiss: () => void },
   safeX: { minX: number; maxX: number } | null = null,
+  frameH = 0,
 ) {
   const sector = sectorById(sectorId, sectors);
   const nodes: Node[] = [];
@@ -487,7 +488,9 @@ function toBranchElements(
     const idx = routeOpts.map((_, i) => i).filter((i) => arc(angles[i]!));
     const raw = idx.map((i) => routeMemory(routeOpts[i]!).soma.y);
     const order = idx.map((_, k) => k).sort((a, b) => raw[a]! - raw[b]!);
-    const spread = spreadSomaY(order.map((k) => raw[k]!), 62);
+    // Tall phone frames get more air between neighbours so the fan fills the screen instead of huddling.
+    const gap = Math.min(120, Math.max(62, Math.round(frameH / (idx.length + 3))));
+    const spread = spreadSomaY(order.map((k) => raw[k]!), gap);
     order.forEach((k, r) => { somaYs[idx[k]!] = spread[r]; });
   }
   memories.forEach((m, i) => {
@@ -671,6 +674,7 @@ export function MeshCanvas({
   const frameRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef({ x: 0, y: 0, zoom: 1 });
   const [safeX, setSafeX] = useState<{ minX: number; maxX: number } | null>(null);
+  const [frameH, setFrameH] = useState(0);
   const safeXRef = useRef(safeX);
   safeXRef.current = safeX;
   useEffect(() => {
@@ -678,6 +682,7 @@ export function MeshCanvas({
     if (!el || typeof window === "undefined") return;
     const measure = () => {
       const w = el.clientWidth;
+      setFrameH((h) => (Math.abs(h - el.clientHeight) < 24 ? h : el.clientHeight));
       const { x, zoom } = viewportRef.current;
       if (w <= 0 || zoom <= 0) return;
       const next = { minX: (SAFE_MARGIN - x) / zoom, maxX: (w - SAFE_MARGIN - x) / zoom };
@@ -710,8 +715,9 @@ export function MeshCanvas({
       graph.sectors?.length ? graph.sectors : defaultSectors(),
       memory,
       safeX,
+      frameH,
     );
-  }, [safeX, graph, touring, tourFilter, tourFocus, sectorId, branchId, selectedId, composing, draftParent, expanded, editing, openMemoryId, editMemory, dismissMemory]);
+  }, [safeX, frameH, graph, touring, tourFilter, tourFocus, sectorId, branchId, selectedId, composing, draftParent, expanded, editing, openMemoryId, editMemory, dismissMemory]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(built.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(built.edges);
@@ -1177,7 +1183,7 @@ export function MeshCanvas({
       ) : null}
       </div>
       {/* Canvas bounds depend only on navigation level, never selection or floating card height. */}
-      <div ref={frameRef} data-testid="graph-canvas-frame" className={cn("absolute inset-x-0 bottom-0 overflow-hidden", showFlow ? "top-48 md:top-36" : "top-28")}>
+      <div ref={frameRef} data-testid="graph-canvas-frame" className={cn("absolute inset-x-0 bottom-0 overflow-hidden", showFlow ? "top-[8.75rem] md:top-36" : "top-28")}>
       {!showFlow ? (
         <BrainOverview
           concepts={graph.concepts}
@@ -1343,7 +1349,7 @@ export function MeshCanvas({
       ) : null}
 
       {showFlow && !touring && sectorId ? (
-        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 z-30", "top-48 md:top-36")}>
+        <div className={cn("pointer-events-none absolute inset-x-0 bottom-0 z-30", "top-[8.75rem] md:top-36")}>
           <div className="pointer-events-auto absolute right-0 top-0 h-0 w-0">
             <QuickAdd
               key={`${sectorId}/${branchId ?? ""}`}
