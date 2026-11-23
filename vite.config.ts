@@ -22,13 +22,13 @@ function hasGlobbedMigrations(root: string): boolean {
 }
 
 /**
-- Finish PGLite bootstrap during dev-server setup (before traffic). Vite awaits
-- async `configureServer` hooks. Production: `src/lib/db` kicks `ensureDbReady`
-- on import.
+ * Finish PGLite bootstrap during dev-server setup (before traffic). Vite awaits
+ * async `configureServer` hooks. Production: `src/lib/db` kicks `ensureDbReady`
+ * on import.
  *
-- Vite awaiting the hook puts this on time-to-first-render, so an app with no
-- migrations — no schema to apply — skips it entirely rather than paying for a
-- PGLite instance it never queries.
+ * Vite awaiting the hook puts this on time-to-first-render, so an app with no
+ * migrations — no schema to apply — skips it entirely rather than paying for a
+ * PGLite instance it never queries.
  */
 function pgliteBootstrapPlugin(): Plugin {
   return {
@@ -52,14 +52,14 @@ function pgliteBootstrapPlugin(): Plugin {
 }
 
 /**
-- Live-preview OAuth popup — handled HERE so the agent never has to create a
-- `/auth/popup` route (and cannot break it by scaffolding a React page that
-- paints the full app shell in the popup).
+ * Live-preview OAuth popup — handled HERE so the agent never has to create a
+ * `/auth/popup` route (and cannot break it by scaffolding a React page that
+ * paints the full app shell in the popup).
  *
-- `signIn` (client.ts) opens `/auth/popup?providerId=…` in a top-level window.
-- This middleware runs before TanStack Start, calls `handleAuthPopupRequest`,
-- and returns the 302 / completion HTML. Deployed apps do not use the popup
-- (full-page OAuth redirect), so `apply: "serve"` is enough.
+ * `signIn` (client.ts) opens `/auth/popup?providerId=…` in a top-level window.
+ * This middleware runs before TanStack Start, calls `handleAuthPopupRequest`,
+ * and returns the 302 / completion HTML. Deployed apps do not use the popup
+ * (full-page OAuth redirect), so `apply: "serve"` is enough.
  */
 function authPopupPlugin(): Plugin {
   return {
@@ -146,7 +146,6 @@ function authPopupPlugin(): Plugin {
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
 // AGENTS.md § "First scaffold".
 export default defineConfig(({ command, isPreview }) => ({
-  base: '/mindmapez/',
   server: {
     host: "0.0.0.0",
     port: 8080,
@@ -171,7 +170,7 @@ export default defineConfig(({ command, isPreview }) => ({
     ...(command === "build" || isPreview
       ? [
           nitro({
-            preset: "github-pages",
+            preset: "vercel",
             // Auto-registers server/middleware/* (the PWA install page +
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
