@@ -491,9 +491,11 @@ test("vite config keeps the nitro serverDir wiring", () => {
 
 test("nitro middleware and its bundled assets exist", () => {
   const middleware = readFileSync(join(TEMPLATE_ROOT, "server/middleware/grok-pwa.ts"), "utf8");
-  assert.match(middleware, /install-page\.html\?raw/);
+  assert.match(middleware, /install-page-template/);
   assert.match(middleware, /virtual:grok-og-identity/);
-  readFileSync(join(TEMPLATE_ROOT, "scripts/install-page.html"));
+  const html = readFileSync(join(TEMPLATE_ROOT, "scripts/install-page.html"), "utf8");
+  const inlined = readFileSync(join(TEMPLATE_ROOT, "server/install-page-template.ts"), "utf8");
+  assert.ok(inlined.includes(JSON.stringify(html)), "run node scripts/sync-install-page.mjs: inline template drifted");
   readFileSync(join(TEMPLATE_ROOT, "public/__grok/icon-180.png"));
   readFileSync(join(TEMPLATE_ROOT, "public/__grok/install/styles.css"));
 });

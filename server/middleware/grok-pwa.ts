@@ -14,7 +14,7 @@
  *   This must be a middleware transforming `next()`: h3 discards the `response`
  *   runtime hook's return value, and `render:html` does not exist in Nitro v3.
  */
-import installPageTemplate from "../../scripts/install-page.html?raw";
+import installPageTemplate from "../install-page-template";
 import { grokOgIdentity } from "virtual:grok-og-identity";
 import {
   acceptsHtml,
