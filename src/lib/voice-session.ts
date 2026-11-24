@@ -9,6 +9,8 @@
  * The class owns no browser APIs: recognition, speech and the AI turn are injected as
  * ports, so desktop and iOS behaviour is testable without a browser.
  */
+import { BARGE_MIN_WORDS, wordCount } from "./voice.ts";
+
 export type Phase = "idle" | "listening" | "thinking" | "speaking" | "error";
 
 export type RecognizerEvents = {
@@ -45,8 +47,10 @@ export type SessionOptions = {
   isUserSpeech?: (heard: string, spoken: string) => boolean;
   /** Fired when the user talks over the assistant. */
   onBargeIn?: () => void;
-  /** iOS WebKit: single-utterance sessions; continuous mode needs a tap per turn. */
+  /** iOS WebKit: single-utterance recognizers (each is restarted by the session, so the thought is never cut). */
   iosSingle: boolean;
+  /** Words heard over the assistant before it is an interruption (default 2). */
+  bargeMinWords?: number;
   isContinuous: () => boolean;
   onPhase: (p: Phase) => void;
   onLine?: (text: string) => void;
@@ -282,7 +286,9 @@ export class VoiceSession {
       this.opts.onSpeaking?.(false);
       if (!isError && this.active && this.opts.isContinuous()) {
         this.setPhase("idle");
-        this.start(this.opts.iosSingle);
+        // Continuous mode re-opens the mic by itself on every platform, iOS included. If the browser
+        // refuses a start without a tap, onError(not-allowed) drops to idle ("Tap to continue").
+        this.start(true);
       } else {
         this.setPhase("idle");
       }
@@ -302,9 +308,9 @@ export class VoiceSession {
     });
   }
 
-  /** Keep the mic live while speaking so the user can interrupt by voice (not on iOS, where the mic and TTS share one audio route). */
+  /** Keep the mic live while speaking so the user can interrupt by voice, on every platform. */
   private listenWhileSpeaking(turn: number) {
-    if (this.opts.iosSingle || !this.active || !this.opts.isContinuous() || !this.opts.isUserSpeech) return;
+    if (!this.active || !this.opts.isContinuous() || !this.opts.isUserSpeech) return;
     const open = () => turn === this.turn && this.phase === "speaking" && this.active;
     const launch = () => {
       if (!open()) return;
@@ -314,7 +320,7 @@ export class VoiceSession {
           onResult: (results) => {
             if (!open()) return;
             const heard = results.map((r) => r.text).join(" ").trim();
-            if (heard && this.opts.isUserSpeech?.(heard, this.spoken)) {
+            if (heard && wordCount(heard) >= (this.opts.bargeMinWords ?? BARGE_MIN_WORDS) && this.opts.isUserSpeech?.(heard, this.spoken)) {
               this.opts.onBargeIn?.();
               this.bargeIn(heard); // the words that interrupted stay part of the new thought
             }

@@ -450,8 +450,9 @@ export const getGraph = createServerFn({ method: "GET" })
       onboarded: boolean;
       last_saved_at?: string | null;
       brain_sectors_json?: string | null;
+      voice_choice?: string | null;
     }>`
-      select plan, display_name, onboarded, last_saved_at, brain_sectors_json from user_settings where user_id = ${context.userId}
+      select plan, display_name, onboarded, last_saved_at, brain_sectors_json, voice_choice from user_settings where user_id = ${context.userId}
     `;
     const voiceCount = memories.filter((m) => m.memory_type === "voice").length;
     const accepted = connections.filter((c) => c.status === "accepted");
@@ -468,6 +469,7 @@ export const getGraph = createServerFn({ method: "GET" })
       connections: accepted.map(mapConnection),
       suggested: connections.filter((c) => c.status === "suggested").map(mapConnection),
       lastSavedAt: settings[0]?.last_saved_at ?? null,
+      voiceChoice: (settings[0]?.voice_choice === "male" ? "male" : "female") as "male" | "female",
       sectors: mergeSectors(parseSectorOverrides(settings[0]?.brain_sectors_json)),
     };
   });

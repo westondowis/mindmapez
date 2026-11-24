@@ -1,3 +1,5 @@
+import { createServerFn } from "@tanstack/react-start";
+import { authMiddleware } from "@/lib/auth/middleware";
 import { organizeLocal, parseOrganizeJson } from "@/lib/organize";
 import { MAX_AUTO_TAGS, sanitizeGeneratedTags } from "@/lib/tag-intel";
 import type { OrganizeResult } from "@/lib/types";
@@ -139,3 +141,56 @@ export async function transcribeAudio(dataUrl: string): Promise<string | null> {
   }
 }
 
+
+/** Longest reply sent to server TTS; voice replies are a couple of sentences, so this is a safety cap. */
+export const TTS_MAX_CHARS = 1200;
+/** OpenAI-compatible speech voices: calm male and calm female. */
+export const TTS_VOICE: Record<"male" | "female", string> = { male: "onyx", female: "nova" };
+
+export type SpeechResult = { ok: true; dataUrl: string } | { ok: false; reason: "no_key" | "empty" | "failed" };
+
+/**
+ * Text to speech through the configured LLM provider (OpenAI-compatible POST {LLM_BASE_URL}/audio/speech,
+ * key LLM_API_KEY, model LLM_TTS_MODEL or tts-1). Returns an mp3 data URL so the client can play it through
+ * one persistent, tap-unlocked <audio> element, which, unlike speechSynthesis, is not muted by the iPhone
+ * hardware silent switch when the audio session is "playback". XAI is not used. Never throws: the client
+ * falls back to on-device speech on any non-ok result.
+ */
+export async function synthesizeSpeechText(
+  text: string,
+  choice: "male" | "female",
+  env: Record<string, string | undefined> = process.env,
+): Promise<SpeechResult> {
+  const apiKey = env.LLM_API_KEY?.trim();
+  if (!apiKey) return { ok: false, reason: "no_key" };
+  const clean = text.replace(/[*_#`>]+/g, "").replace(/\s+/g, " ").trim().slice(0, TTS_MAX_CHARS);
+  if (!clean) return { ok: false, reason: "empty" };
+  const baseUrl = (env.LLM_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  try {
+    const res = await fetch(`${baseUrl}/audio/speech`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: env.LLM_TTS_MODEL?.trim() || "tts-1",
+        input: clean,
+        voice: TTS_VOICE[choice === "male" ? "male" : "female"],
+        response_format: "mp3",
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { ok: false, reason: "failed" };
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (!bytes.length || bytes.length > 4_000_000) return { ok: false, reason: "failed" };
+    return { ok: true, dataUrl: `data:audio/mp3;base64,${bytes.toString("base64")}` };
+  } catch {
+    return { ok: false, reason: "failed" };
+  }
+}
+
+export const synthesizeSpeech = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .inputValidator((d: { text: string; choice: "male" | "female" }) => ({
+    text: String(d?.text ?? "").slice(0, TTS_MAX_CHARS * 2),
+    choice: d?.choice === "male" ? ("male" as const) : ("female" as const),
+  }))
+  .handler(async ({ data }): Promise<SpeechResult> => synthesizeSpeechText(data.text, data.choice));

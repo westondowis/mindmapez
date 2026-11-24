@@ -54,12 +54,12 @@ export function verbosityHint(t: { turns: number; bargeIns: number; topics: stri
   return "Keep replies to two or three spoken sentences.";
 }
 
-/** Silence after the last recognised speech before a thought is dispatched; partials re-arm it. */
-export const VAD_SILENCE_MS = 1500;
+/** Silence after the last recognised speech before a thought is dispatched (3.5 s so people can pause and finish a long thought); partials re-arm it. */
+export const VAD_SILENCE_MS = 3500;
 /** Cool-down after aborting a recognizer before the next may start (a start racing an abort fails in Chrome). */
 export const RECOGNIZER_GAP_MS = 250;
 /** Pause before a recognizer that ended on its own is started again in continuous mode. */
-export const RECOGNIZER_RESTART_MS = 100;
+export const RECOGNIZER_RESTART_MS = 120;
 /** Distil the voice style profile every this many voice turns. */
 export const STYLE_EVERY_TURNS = 8;
 /** Style line used until a profile has been distilled. */
@@ -155,3 +155,9 @@ export function preferRecognitionOnly(): boolean {
 /** 1-sample silent WAV used to unlock iOS audio playback inside the tap. */
 export const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
 
+
+/** Words of speech heard over the assistant before it counts as an interruption (a stray syllable or echo fragment does not). */
+export const BARGE_MIN_WORDS = 2;
+export function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}

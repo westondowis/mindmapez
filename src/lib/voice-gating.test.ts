@@ -42,7 +42,7 @@ describe("voice prompt and style", () => {
   it("distils on every 8th turn only", () => {
     assert.deepEqual([0, 1, 7, 8, 9, 16].map((n) => shouldDistillStyle(n)), [false, false, false, true, false, true]);
   });
-  it("waits 1.5 s of quiet before sending a thought", () => assert.equal(VAD_SILENCE_MS, 1500));
+  it("waits 3.5 s of quiet before sending a thought", () => assert.equal(VAD_SILENCE_MS, 3500));
 });
 
 function rig(speakingListener = true) {

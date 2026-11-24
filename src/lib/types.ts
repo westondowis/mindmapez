@@ -152,6 +152,8 @@ export type GraphPayload = {
   connections: GraphConnection[];
   suggested: GraphConnection[];
   lastSavedAt: string | null;
+  /** Saved spoken voice; null until the server has returned settings. */
+  voiceChoice?: "male" | "female";
   sectors: BrainSector[];
 };
 

@@ -2,13 +2,15 @@ import { Mic, Volume2 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { askAssistant, voiceIngest } from "@/lib/server/assistant";
+import { askAssistant, setVoiceChoice, voiceIngest } from "@/lib/server/assistant";
+import { synthesizeSpeech } from "@/lib/server/ai";
+import { getGraph } from "@/lib/server/memories";
 import { listReviews, queueReview, recordVoiceTurn } from "@/lib/server/reviews";
 import { RECOGNIZER_GAP_MS, RECOGNIZER_RESTART_MS, SILENT_WAV, VAD_SILENCE_MS, isEchoOf, preferRecognitionOnly } from "@/lib/voice";
 import { createTurnProcessor } from "@/lib/voice-ingest";
 import { startEnergyMonitor } from "@/lib/voice-energy";
 import { VoiceSession, type Phase, type Recognizer, type RecognizerEvents } from "@/lib/voice-session";
-import { primeSynth, speakNative, type VoiceChoice } from "@/lib/voice-synth";
+import { playServerAudio, primeSynth, speakNative, type VoiceChoice } from "@/lib/voice-synth";
 
 type SpeechResultList = ArrayLike<{ 0: { transcript: string }; isFinal: boolean }>;
 type SpeechRecognitionLike = {
@@ -73,7 +75,15 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   const qc = useQueryClient();
   const pending = useQuery({ queryKey: ["reviews"], queryFn: () => listReviews() }).data?.length ?? 0;
   const [open, setOpen] = useState(false);
-  const [voice, setVoice] = useState<VoiceChoice>("female");
+  const [voice, setVoice] = useState<VoiceChoice>(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem("mm-voice") === "male" ? "male" : "female";
+    } catch {
+      return "female";
+    }
+  });
+  const voiceTouched = useRef(false);
+  const serverVoice = useQuery({ queryKey: ["graph"], queryFn: () => getGraph(), staleTime: 60_000 }).data?.voiceChoice;
   const [phase, setPhase] = useState<Phase>("idle");
   const [line, setLine] = useState("");
   const [reply, setReply] = useState("");
@@ -82,6 +92,17 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
   live.current = { voice, continuous, open, onSpeaking };
   const bargedIn = useRef(false);
   const silentAudio = useRef<HTMLAudioElement | null>(null);
+  const speakToken = useRef(0);
+  /** The single persistent <audio> element: unlocked inside the first tap, reused for every reply. */
+  const audioEl = (): HTMLAudioElement => {
+    if (!silentAudio.current) {
+      const a = new Audio();
+      a.setAttribute("playsinline", "");
+      a.preload = "auto";
+      silentAudio.current = a;
+    }
+    return silentAudio.current;
+  };
   const stopSpeech = useRef<() => void>(() => {});
   const stopEnergy = useRef<(() => void) | null>(null);
   const iosSingle = useMemo(() => (typeof window === "undefined" ? false : preferRecognitionOnly()), []);
@@ -116,14 +137,29 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
           speak: (text, cb) => {
             // Recognition is already fully stopped here, so iOS can leave the call route.
             setAudioSession("playback");
-            stopSpeech.current = speakNative(text, live.current.voice, {
-              onStart: cb.onStart,
-              onEnd: () => {
-                if (live.current.open) setAudioSession("play-and-record");
-                cb.onEnd();
+            const finish = () => {
+              if (live.current.open) setAudioSession("play-and-record");
+              cb.onEnd();
+            };
+            const token = ++speakToken.current;
+            const fallback = () => {
+              if (token !== speakToken.current) return;
+              stopSpeech.current = speakNative(text, live.current.voice, { onStart: cb.onStart, onEnd: finish, onError: cb.onEnd });
+            };
+            // Server TTS through the one tap-unlocked <audio> element (the iPhone silent switch mutes speechSynthesis, not this).
+            stopSpeech.current = () => { speakToken.current++; };
+            void synthesizeSpeech({ data: { text, choice: live.current.voice } }).then(
+              (res) => {
+                if (token !== speakToken.current) return;
+                if (!res.ok) return fallback();
+                stopSpeech.current = playServerAudio(audioEl(), res.dataUrl, {
+                  onStart: cb.onStart,
+                  onEnd: finish,
+                  onError: fallback, // nothing was heard: speak natively instead
+                });
               },
-              onError: cb.onEnd,
-            });
+              fallback,
+            );
           },
         },
         {
@@ -143,14 +179,15 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     [turns, iosSingle],
   );
 
-  // Saved voice, and a clean teardown on unmount / app switch / sleep.
+  // The account's saved voice wins on a new device or after a reload (unless the user just picked one).
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("mm-voice");
-      if (saved === "male" || saved === "female") setVoice(saved);
-    } catch {
-      // private mode: keep the default voice
-    }
+    if (!serverVoice || voiceTouched.current) return;
+    setVoice(serverVoice);
+    try { localStorage.setItem("mm-voice", serverVoice); } catch { /* storage unavailable */ }
+  }, [serverVoice]);
+
+  // Clean teardown on unmount / app switch / sleep.
+  useEffect(() => {
     const warm = () => void window.speechSynthesis?.getVoices();
     warm();
     window.speechSynthesis?.addEventListener?.("voiceschanged", warm);
@@ -172,9 +209,11 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
     setAudioSession("play-and-record");
     primeSynth();
     try {
-      const a = (silentAudio.current ??= new Audio(SILENT_WAV));
-      a.muted = true;
-      a.setAttribute("playsinline", "");
+      // Play the silent clip on the SAME element replies will use, inside the tap, so iOS keeps it unlocked.
+      const a = audioEl();
+      a.muted = false;
+      a.volume = 1;
+      a.src = SILENT_WAV;
       const p = a.play();
       if (p) void p.then(() => a.pause()).catch(() => {});
     } catch {
@@ -276,12 +315,16 @@ export function VoicePanel({ onSpeaking }: { onSpeaking: (on: boolean) => void }
             key={v}
             type="button"
             onClick={() => {
+              voiceTouched.current = true;
               setVoice(v);
               try {
                 localStorage.setItem("mm-voice", v);
               } catch {
-                // storage unavailable: the choice just won't persist
+                // storage unavailable: the account copy below still persists it
               }
+              void setVoiceChoice({ data: { choice: v } })
+                .then(() => qc.invalidateQueries({ queryKey: ["graph"] }))
+                .catch(() => {});
             }}
             className={`rounded-full px-2.5 py-1 text-[11px] ${voice === v ? "bg-[#6a2ca8]" : "bg-white/10"}`}
           >

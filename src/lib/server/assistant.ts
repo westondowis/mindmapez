@@ -201,3 +201,13 @@ export const voiceIngest = createServerFn({ method: "POST" })
       branches: concepts.slice(0, 12).map((c) => c.name),
     };
   });
+
+export const setVoiceChoice = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .inputValidator((d: { choice: "male" | "female" }) => ({ choice: d?.choice === "male" ? ("male" as const) : ("female" as const) }))
+  .handler(async ({ data, context }) => {
+    const sql = await getSql();
+    await ensureUserSettings(sql, context.userId);
+    await sql`update user_settings set voice_choice = ${data.choice} where user_id = ${context.userId}`;
+    return { ok: true as const, choice: data.choice };
+  });

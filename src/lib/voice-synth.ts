@@ -165,3 +165,68 @@ export function speakNative(
     try { synth.cancel(); } catch { /* ignore */ }
   };
 }
+
+/** Minimal slice of HTMLAudioElement the player needs (lets tests drive it without a DOM). */
+export type AudioLike = {
+  src: string;
+  currentTime: number;
+  volume: number;
+  muted: boolean;
+  onplaying: ((ev: Event) => unknown) | null;
+  onended: ((ev: Event) => unknown) | null;
+  onerror: ((ev: Event | string) => unknown) | null;
+  play: () => Promise<void> | void;
+  pause: () => void;
+};
+
+/** If server audio has not started playing by now, give up and let the caller fall back to native speech. */
+export const AUDIO_START_TIMEOUT_MS = 4000;
+
+/**
+ * Play a server-synthesised mp3 (data URL) through ONE persistent <audio> element that a tap already unlocked.
+ * Unlike speechSynthesis this ignores the iPhone silent switch once navigator.audioSession.type is "playback".
+ * Returns a stop function (pause + reset) used for barge-in and close. onError means nothing was heard.
+ */
+export function playServerAudio(audio: AudioLike, dataUrl: string, cb: SpeakCallbacks): () => void {
+  let settled = false;
+  let started = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  const reset = () => {
+    audio.onplaying = audio.onended = audio.onerror = null;
+    try { audio.pause(); } catch { /* ignore */ }
+    try { audio.currentTime = 0; } catch { /* ignore */ }
+  };
+  const finish = (fn: () => void) => {
+    if (settled) return;
+    settled = true;
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = null;
+    reset();
+    fn();
+  };
+  try { audio.pause(); } catch { /* ignore */ }
+  audio.muted = false;
+  audio.volume = 1;
+  audio.onplaying = () => {
+    if (started || settled) return;
+    started = true;
+    if (watchdog) clearTimeout(watchdog);
+    cb.onStart();
+  };
+  audio.onended = () => finish(cb.onEnd);
+  audio.onerror = () => finish(started ? cb.onEnd : cb.onError);
+  audio.src = dataUrl;
+  watchdog = setTimeout(() => { if (!started) finish(cb.onError); }, AUDIO_START_TIMEOUT_MS);
+  try {
+    const p = audio.play();
+    if (p && typeof (p as Promise<void>).catch === "function") (p as Promise<void>).catch(() => finish(cb.onError));
+  } catch {
+    finish(cb.onError);
+  }
+  return () => {
+    settled = true;
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = null;
+    reset();
+  };
+}
