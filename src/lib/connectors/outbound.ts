@@ -33,7 +33,8 @@ export type ExecuteResult = { ok: boolean; data: unknown; error: string | null; 
 export interface AppProvider {
   name: string;
   configured(): boolean;
-  listApps(opts?: { limit?: number; cursor?: string }): Promise<AppInfo[]>;
+  /** `include`: slugs that must be returned even if they fall outside the first page (e.g. featured apps). */
+  listApps(opts?: { limit?: number; cursor?: string; include?: readonly string[] }): Promise<AppInfo[]>;
   connectionState(userId: string, apps?: string[]): Promise<AppConnection[]>;
   connect(userId: string, app: string, callbackUrl?: string): Promise<{ requestId: string; redirectUrl: string | null }>;
   disconnect(userId: string, accountId: string): Promise<void>;
