@@ -22,6 +22,7 @@ import { Route as SearchRouteImport } from './routes/search'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TagsRouteImport } from './routes/tags'
 import { Route as TimelineRouteImport } from './routes/timeline'
+import { Route as ApiVersionRouteImport } from './routes/api/version'
 import { Route as MemoryIdRouteImport } from './routes/memory.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBridgeActionsRouteImport } from './routes/api/bridge/actions'
@@ -91,6 +92,11 @@ const TimelineRoute = TimelineRouteImport.update({
   path: '/timeline',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiVersionRoute = ApiVersionRouteImport.update({
+  id: '/api/version',
+  path: '/api/version',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MemoryIdRoute = MemoryIdRouteImport.update({
   id: '/memory/$id',
   path: '/memory/$id',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/tags': typeof TagsRoute
   '/timeline': typeof TimelineRoute
+  '/api/version': typeof ApiVersionRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/bridge/actions': typeof ApiBridgeActionsRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/tags': typeof TagsRoute
   '/timeline': typeof TimelineRoute
+  '/api/version': typeof ApiVersionRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/bridge/actions': typeof ApiBridgeActionsRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/tags': typeof TagsRoute
   '/timeline': typeof TimelineRoute
+  '/api/version': typeof ApiVersionRoute
   '/memory/$id': typeof MemoryIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/bridge/actions': typeof ApiBridgeActionsRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tags'
     | '/timeline'
+    | '/api/version'
     | '/memory/$id'
     | '/api/auth/$'
     | '/api/bridge/actions'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tags'
     | '/timeline'
+    | '/api/version'
     | '/memory/$id'
     | '/api/auth/$'
     | '/api/bridge/actions'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tags'
     | '/timeline'
+    | '/api/version'
     | '/memory/$id'
     | '/api/auth/$'
     | '/api/bridge/actions'
@@ -233,6 +245,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   TagsRoute: typeof TagsRoute
   TimelineRoute: typeof TimelineRoute
+  ApiVersionRoute: typeof ApiVersionRoute
   MemoryIdRoute: typeof MemoryIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBridgeActionsRoute: typeof ApiBridgeActionsRoute
@@ -331,6 +344,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TimelineRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/version': {
+      id: '/api/version'
+      path: '/api/version'
+      fullPath: '/api/version'
+      preLoaderRoute: typeof ApiVersionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/memory/$id': {
       id: '/memory/$id'
       path: '/memory/$id'
@@ -369,6 +389,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   TagsRoute: TagsRoute,
   TimelineRoute: TimelineRoute,
+  ApiVersionRoute: ApiVersionRoute,
   MemoryIdRoute: MemoryIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBridgeActionsRoute: ApiBridgeActionsRoute,
