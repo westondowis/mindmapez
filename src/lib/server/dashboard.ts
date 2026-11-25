@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
 import type { DashboardStats } from "@/lib/types";
+import { parseSuggestionReason, sharedConceptNames, suggestionReasonLine } from "@/lib/suggestion-reason";
 import { mapMemorySummary, memorySummaryColumns, type MemoryRow } from "./map";
 import { ensureUserSettings, resetMind } from "./seed";
 
@@ -89,11 +90,17 @@ export const getDashboard = createServerFn({ method: "GET" })
       return r[0]?.name ?? "Concept";
     };
 
-    const suggested = [];
+    const suggested: DashboardStats["suggested"] = [];
     for (const s of suggestedRows) {
+      // Shared concepts are derived live (also covers suggestions saved before v5.47); if a memory
+      // lost its branches since, fall back to the names encoded in the reason text.
+      const derived = s.source_type === "memory" && s.target_type === "memory" ? await sharedConceptNames(sql, context.userId, s.source_id, s.target_id) : [];
+      const shared = derived.length ? derived : parseSuggestionReason(s.reason);
       suggested.push({
         id: s.id,
         reason: s.reason,
+        reasonLine: suggestionReasonLine(shared, s.reason),
+        shared,
         strength: Number(s.strength),
         a: { type: s.source_type, id: s.source_id, label: await labelFor(s.source_type, s.source_id) },
         b: { type: s.target_type, id: s.target_id, label: await labelFor(s.target_type, s.target_id) },

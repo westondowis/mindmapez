@@ -171,6 +171,10 @@ export type DashboardStats = {
   suggested: {
     id: string;
     reason: string | null;
+    /** Readable "Both linked to …" line, or the stored reason for older suggestions. */
+    reasonLine: string | null;
+    /** Names of concepts both sides share (top 3), for chips. */
+    shared: string[];
     strength: number;
     a: { type: string; id: string; label: string };
     b: { type: string; id: string; label: string };

@@ -8,7 +8,8 @@ import { RequireAuth } from "@/components/require-auth";
 import { Button } from "@/components/ui/button";
 import { getDashboard } from "@/lib/server/dashboard";
 import { setConnectionStatus } from "@/lib/server/memories";
-import { FREE_MEMORY_LIMIT } from "@/lib/types";
+import { toast } from "sonner";
+import { FREE_MEMORY_LIMIT, type DashboardStats } from "@/lib/types";
 
 export const Route = createFileRoute("/dashboard")({ component: DashboardRoute });
 
@@ -34,7 +35,21 @@ function DashboardPage() {
   const q = useQuery({ queryKey: ["dashboard"], queryFn: () => getDashboard() });
   const decide = useMutation({
     mutationFn: setConnectionStatus,
-    onSuccess: () => {
+    // Drop the card right away; restore the list if the server rejects, then refetch either way.
+    onMutate: async (vars: { data: { id: string; status: "accepted" | "rejected" } }) => {
+      await qc.cancelQueries({ queryKey: ["dashboard"] });
+      const prev = qc.getQueryData<DashboardStats>(["dashboard"]);
+      if (prev) qc.setQueryData<DashboardStats>(["dashboard"], { ...prev, suggested: prev.suggested.filter((x) => x.id !== vars.data.id) });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["dashboard"], ctx.prev);
+      toast.error("Couldn't update that suggestion. Try again.");
+    },
+    onSuccess: (_res, vars) => {
+      if (vars.data.status === "accepted") toast.success("Connection accepted");
+    },
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
       void qc.invalidateQueries({ queryKey: ["graph"] });
     },
@@ -105,23 +120,49 @@ function DashboardPage() {
               </section>
               <section className="rounded-xl border border-border bg-card p-5">
                 <h2 className="font-display text-xl">Suggested connections</h2>
-                <ul className="mt-4 space-y-4">
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  When two memories share the same branch or tag, they appear here for you to accept or dismiss.
+                </p>
+                <ul className="mt-4 space-y-3" data-testid="suggested-list">
                   {d.suggested.length ? (
                     d.suggested.map((s) => (
-                      <li key={s.id} className="rounded-lg border border-border bg-background/50 p-3">
-                        <p className="text-sm">
-                          <span className="text-foreground">{s.a.label}</span>
-                          <span className="text-muted-foreground"> → </span>
-                          <span className="text-foreground">{s.b.label}</span>
-                        </p>
-                        {s.reason ? <p className="mt-1 text-xs text-muted-foreground">{s.reason}</p> : null}
-                        <div className="mt-2 flex gap-2">
-                          <Button size="sm" onClick={() => decide.mutate({ data: { id: s.id, status: "accepted" } })}>
+                      <li
+                        key={s.id}
+                        data-testid="suggestion-card"
+                        className="rounded-lg border border-border bg-background/50 p-3"
+                      >
+                        <div className="flex flex-col gap-1 text-sm">
+                          <p className="break-words font-medium leading-snug text-foreground">{s.a.label}</p>
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground" aria-hidden>
+                            ↕ with
+                          </p>
+                          <p className="break-words font-medium leading-snug text-foreground">{s.b.label}</p>
+                        </div>
+                        {s.shared.length ? (
+                          <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Shared branches">
+                            {s.shared.map((name) => (
+                              <li
+                                key={name}
+                                className="max-w-full truncate rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] text-primary"
+                              >
+                                {name}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {s.reasonLine ? <p className="mt-2 text-xs text-muted-foreground">{s.reasonLine}</p> : null}
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <Button
+                            className="min-h-11"
+                            aria-label={`Accept connection between ${s.a.label} and ${s.b.label}`}
+                            onClick={() => decide.mutate({ data: { id: s.id, status: "accepted" } })}
+                          >
                             Accept
                           </Button>
                           <Button
-                            size="sm"
-                            variant="ghost"
+                            variant="outline"
+                            className="min-h-11"
+                            aria-label={`Dismiss connection between ${s.a.label} and ${s.b.label}`}
                             onClick={() => decide.mutate({ data: { id: s.id, status: "rejected" } })}
                           >
                             Dismiss
@@ -130,7 +171,9 @@ function DashboardPage() {
                       </li>
                     ))
                   ) : (
-                    <li className="text-sm text-muted-foreground">No pending suggestions. Keep capturing.</li>
+                    <li className="text-sm text-muted-foreground" data-testid="suggested-empty">
+                      No pending suggestions. Keep capturing memories.
+                    </li>
                   )}
                 </ul>
               </section>
