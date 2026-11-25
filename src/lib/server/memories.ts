@@ -12,6 +12,7 @@ import { llmChat, organizeMemory, suggestTags, transcribeAudio } from "./ai";
 import { cacheDocumentDigest, documentForDigest, parseDigestReply, saveArtifactStateCore } from "@/lib/digestion/artifact-store";
 import { inlineMediaOrNull, validateViewerFields, type JsonObject, type ViewerType } from "@/lib/digestion/viewer-types";
 import type { Sql } from "@/lib/db";
+import { buildSuggestionReason, sharedConceptNames } from "@/lib/suggestion-reason";
 import { mapConcept, mapConnection, mapMemory, mapMemorySummary, memoryDetailColumns, memorySummaryColumns, type MemoryRow } from "./map";
 import { ensureUserSettings } from "./seed";
 
@@ -285,11 +286,13 @@ export async function createMemoryForUser(sql: Sql, userId: string, data: Create
         limit 6
       `;
       for (const sib of siblings) {
+        const shared = await sharedConceptNames(sql, context.userId, id, sib.id);
+        const reason = buildSuggestionReason(shared, sib.title);
         await sql`
           insert into connections (
             id, user_id, source_type, source_id, target_type, target_id, strength, reason, status
           ) values (
-            ${newId()}, ${context.userId}, 'memory', ${id}, 'memory', ${sib.id}, 0.55, ${"Shared themes with: " + sib.title}, 'suggested'
+            ${newId()}, ${context.userId}, 'memory', ${id}, 'memory', ${sib.id}, 0.55, ${reason}, 'suggested'
           )
         `;
       }
