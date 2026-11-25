@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ConnectorSummary } from "@/lib/connectors/admin";
-import { AppHub } from "@/components/connectors/app-hub";
+import { AppHub, FeaturedApps } from "@/components/connectors/app-hub";
 import {
   normalizeFlags,
   PERMISSION_LABELS,
@@ -131,7 +131,9 @@ function ConnectorsPage() {
           }
         />
 
-        <section className="rounded-xl border border-border bg-card p-5">
+        <FeaturedApps />
+
+        <section className="mt-4 rounded-xl border border-border bg-card p-5">
           <h2 className="font-display text-xl">MCP endpoint</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Point any MCP client that supports a remote server with a bearer token at this URL. Send the connector's
