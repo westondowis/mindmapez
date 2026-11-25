@@ -143,13 +143,13 @@ function SettingsPage() {
           </Button>
         </section>
         <section className="mt-4 rounded-xl border border-border bg-card p-5">
-          <h2 className="font-display text-xl">Connectors</h2>
+          <h2 className="font-display text-xl">Apps &amp; connectors</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Let an AI agent or app (Gmail, a browser agent, Claude, Grok) read or add to one branch of your brain over
-            MCP. Each connector gets its own token, scope and activity log.
+            Connect Google Drive, Gmail, Outlook and more. You can also let an AI agent or app (a browser agent, Claude,
+            Grok) read or add to one branch of your brain over MCP, each with its own token, scope and activity log.
           </p>
-          <Button asChild className="mt-4" variant="outline">
-            <Link to="/connectors">Manage connectors</Link>
+          <Button asChild className="mt-4 min-h-11" variant="outline">
+            <Link to="/connectors">Connect apps &amp; agents</Link>
           </Button>
         </section>
         <DriveBackupCard />

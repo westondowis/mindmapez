@@ -26,6 +26,13 @@ async function getClient() {
   return client;
 }
 
+type RawToolkit = {
+  slug: string;
+  name: string;
+  meta?: { logo?: string; description?: string; categories?: { name?: string }[] };
+  noAuth?: boolean;
+};
+
 const sessionFor = async (userId: string, app?: string) =>
   (await getClient()).create(userId, app ? { toolkits: [app] } : undefined);
 
@@ -33,14 +40,15 @@ export const composioProvider: AppProvider = {
   name: "composio",
   configured: composioConfigured,
 
-  async listApps({ limit = 50, cursor } = {}) {
-    const res = (await (await getClient()).toolkits.get({ limit, cursor, sortBy: "usage" })) as unknown;
-    const raw = (Array.isArray(res) ? res : ((res as { items?: unknown[] }).items ?? [])) as {
-      slug: string;
-      name: string;
-      meta?: { logo?: string; description?: string; categories?: { name?: string }[] };
-      noAuth?: boolean;
-    }[];
+  async listApps({ limit = 50, cursor, include = [] } = {}) {
+    const c = await getClient();
+    const res = (await c.toolkits.get({ limit, cursor, sortBy: "usage" })) as unknown;
+    const raw = (Array.isArray(res) ? res : ((res as { items?: unknown[] }).items ?? [])) as RawToolkit[];
+    const seen = new Set(raw.map((t) => t.slug));
+    // Featured toolkits outside the usage-sorted page are fetched one by one; an unknown slug is skipped.
+    const missing = include.filter((s) => !seen.has(s));
+    const extra = await Promise.allSettled(missing.map((s) => c.toolkits.get(s) as Promise<unknown>));
+    for (const r of extra) if (r.status === "fulfilled" && r.value && typeof (r.value as RawToolkit).slug === "string") raw.push(r.value as RawToolkit);
     return raw.map((t) => ({
       slug: t.slug,
       name: t.name,

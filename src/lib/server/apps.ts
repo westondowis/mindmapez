@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql } from "@/lib/db";
+import { FEATURED_SLUGS } from "@/lib/featured-apps";
 
 /**
  * Owner-side app hub: Composio catalog, connect links, and the approval queue
@@ -26,7 +27,7 @@ export const listApps = createServerFn({ method: "GET" })
     const { provider } = await hub();
     if (!provider.configured()) return { configured: false as const, apps: [], connections: [] };
     try {
-      const apps = await provider.listApps({ limit: 60 });
+      const apps = await provider.listApps({ limit: 60, include: FEATURED_SLUGS });
       const connections = await provider.connectionState(context.userId, apps.map((a) => a.slug));
       return { configured: true as const, apps, connections };
     } catch (err) {
