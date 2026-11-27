@@ -1,3 +1,4 @@
+import { ExplainButton } from "@/components/explain-sheet";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -67,6 +68,7 @@ export function GraphSearchPanel({ graph, onPick }: { graph: GraphPayload; onPic
             <p className="line-clamp-2 text-xs text-muted-foreground">{result.snippet}</p>
             {result.tags.length ? <p className="mt-1 text-[10px] text-muted-foreground">{result.tags.map(tag => `#${tag}`).join(" ")}</p> : null}
           </button>
+          <ExplainButton targetType={result.type} targetId={result.id} title={result.title} className="mt-0.5" />
         </li>)}
       </ul>
       {extra.length ? <section aria-label="Deeper matches" className="space-y-2">
@@ -78,6 +80,7 @@ export function GraphSearchPanel({ graph, onPick }: { graph: GraphPayload; onPic
               <p className="text-sm font-medium">{m.title}</p>
               <p className="line-clamp-2 text-xs text-muted-foreground">{m.snippet}</p>
             </button>
+            <ExplainButton targetType="memory" targetId={hit.id} title={m.title} className="mt-0.5" />
           </li>; })}
         </ul>
       </section> : null}

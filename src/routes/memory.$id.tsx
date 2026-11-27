@@ -1,3 +1,4 @@
+import { ExplainButton } from "@/components/explain-sheet";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
@@ -60,6 +61,10 @@ function MemoryPage() {
               <span className="text-xs text-muted-foreground">{formatDate(m.createdAt)}</span>
             </div>
             <h1 className="mt-3 font-display text-4xl font-medium tracking-tight">{m.title}</h1>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <ExplainButton targetType="memory" targetId={m.id} title={m.title} className="border border-border" />
+              <ExplainButton targetType="memory" targetId={m.id} title={m.title} startMode="audio" label="Listen" className="border border-border" />
+            </div>
             <div className="mt-4 flex items-center justify-between">
               <Stars value={m.importance} size="md" onChange={(n) => save.mutate({ data: { id: m.id, importance: n } })} />
               <span className="text-sm text-muted-foreground">{m.aiImpact.replace("_", " ")} impact</span>

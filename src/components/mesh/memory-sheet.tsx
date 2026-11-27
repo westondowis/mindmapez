@@ -12,6 +12,7 @@ import { deleteMemory, getMemory, suggestMemoryTags, updateMemory } from "@/lib/
 import { formatDate } from "@/lib/utils";
 import { EMOTIONS, NODE_KINDS, type NodeKind } from "@/lib/types";
 import { TagEditor } from "@/components/tag-editor";
+import { ExplainButton } from "@/components/explain-sheet";
 import { MemoryViewer } from "@/components/digestion/memory-viewer";
 
 export function MemorySheet({
@@ -184,6 +185,7 @@ export function MemorySheet({
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-primary">{editing ? "Edit memory" : "Memory"}</p>
         <div className="flex items-center gap-1">
+          {m ? <ExplainButton targetType="memory" targetId={m.id} title={m.title} label="Explain" className="h-11 min-w-11 px-2" iconOnly /> : null}
           <button type="button" onClick={requestDone} className="flex size-11 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label={editing ? "Done editing" : "Edit memory"}>
             <Pencil className="size-4" />
           </button>

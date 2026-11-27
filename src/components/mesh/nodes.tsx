@@ -9,6 +9,7 @@ import { BRANCH_RADIUS, MEMORY_BOX, pointOnRing, type MemoryRoute } from "@/lib/
 import type { NodeKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { EmojiGlyph } from "@/components/emoji-glyph";
+import { ExplainButton } from "@/components/explain-sheet";
 
 export type MeNodeData = { label: string; selected?: boolean };
 export type SectorNodeData = { label: string; kicker: string; selected?: boolean };
@@ -367,7 +368,7 @@ function RoutedSynapse({ route, ringCenter, glow }: { route: MemoryRoute; ringCe
   );
 }
 
-export function MemoryNode({ data }: NodeProps) {
+export function MemoryNode({ id, data }: NodeProps) {
   const d = data as MemoryNodeData;
   const color = d.color ? nodeColorCss(d.color) : KIND_COLOR[d.kind];
   const stop = (event: React.SyntheticEvent) => {
@@ -393,6 +394,7 @@ export function MemoryNode({ data }: NodeProps) {
           <div className="nodrag nopan absolute z-10 w-[min(72vw,240px)] -translate-x-1/2 rounded-xl border border-border bg-background/95 p-2.5 text-left shadow-soft" style={{ left: somaX, top: somaY + 40 }}>
             <div className="flex items-start gap-1">
               <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">{d.title}</p>
+              <ExplainButton targetType="memory" targetId={id} title={d.title} iconOnly label="Explain" className="shrink-0" />
               <button type="button" className="grid size-9 shrink-0 place-items-center rounded-md text-foreground hover:bg-secondary" aria-label="Edit memory" onPointerDown={stop} onClick={(event) => { stop(event); d.onEdit?.(); }}>
                 <SquarePen className="size-4" />
               </button>
@@ -429,6 +431,7 @@ export function MemoryNode({ data }: NodeProps) {
         <div className="nodrag nopan absolute left-1/2 top-full z-10 mt-2 w-[min(72vw,240px)] -translate-x-1/2 rounded-xl border border-border bg-background/95 p-2.5 text-left shadow-soft">
           <div className="flex items-start gap-1">
             <p className="min-w-0 flex-1 text-sm leading-snug text-foreground">{d.title}</p>
+            <ExplainButton targetType="memory" targetId={id} title={d.title} iconOnly label="Explain" className="shrink-0" />
             <button
               type="button"
               className="grid size-9 shrink-0 place-items-center rounded-md text-foreground hover:bg-secondary"

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { useState } from "react";
 import { Toaster } from "sonner";
+import { ExplainHost } from "@/components/explain-sheet";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { AccountPersistHost } from "@/components/account-persist-host";
 import { GithubSyncHost } from "@/components/github-sync-host";
@@ -75,6 +76,7 @@ function RootDocument() {
             <AccountPersistHost>
               <GithubSyncHost />
               <Outlet />
+              <ExplainHost />
               <Toaster theme="dark" position="bottom-center" offset="var(--content-bottom-pad)" richColors={false} />
             </AccountPersistHost>
           </AuthProvider>

@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { FileText, ImageIcon, Link2, Mic, Network, Table2, Type, Video } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ExplainButton } from "@/components/explain-sheet";
 import { KIND_LABEL, KIND_TONE } from "@/lib/kind-styles";
 import type { MemorySummary } from "@/lib/types";
 import { formatRelative } from "@/lib/utils";
@@ -61,6 +62,7 @@ export function MemoryCard({ memory }: { memory: MemorySummary }) {
     >
       <Network className="size-3.5" aria-hidden /> Show in mesh
     </Link>
+    <ExplainButton targetType="memory" targetId={memory.id} title={memory.title} className="ml-1 text-xs" />
     </div>
   );
 }

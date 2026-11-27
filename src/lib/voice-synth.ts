@@ -230,3 +230,13 @@ export function playServerAudio(audio: AudioLike, dataUrl: string, cb: SpeakCall
     reset();
   };
 }
+
+/** Safari Audio Session API (iOS 16.4+): "playback" ignores the silent switch and follows the active route. */
+export function setAudioSessionType(type: "playback" | "play-and-record" | "auto"): void {
+  try {
+    const as = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+    if (as && as.type !== type) as.type = type;
+  } catch {
+    // unsupported: default routing
+  }
+}
