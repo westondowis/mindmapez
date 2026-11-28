@@ -13,6 +13,7 @@ import { formatDate } from "@/lib/utils";
 import { EMOTIONS, NODE_KINDS, type NodeKind } from "@/lib/types";
 import { TagEditor } from "@/components/tag-editor";
 import { ExplainButton } from "@/components/explain-sheet";
+import { MoveMemoryButton } from "@/components/move-memory-sheet";
 import { MemoryViewer } from "@/components/digestion/memory-viewer";
 
 export function MemorySheet({
@@ -343,6 +344,9 @@ export function MemorySheet({
                 </div>
               </div>
             ) : null}
+            <div className="mt-4">
+              <MoveMemoryButton memoryId={m.id} currentIds={m.concepts.map((c) => c.id)} />
+            </div>
             {m.related.length ? (
               <div className="mt-5">
                 <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Related memories</p>

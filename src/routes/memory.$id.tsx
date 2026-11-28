@@ -1,4 +1,5 @@
 import { ExplainButton } from "@/components/explain-sheet";
+import { MoveMemoryButton } from "@/components/move-memory-sheet";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
@@ -64,6 +65,7 @@ function MemoryPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               <ExplainButton targetType="memory" targetId={m.id} title={m.title} className="border border-border" />
               <ExplainButton targetType="memory" targetId={m.id} title={m.title} startMode="audio" label="Listen" className="border border-border" />
+              <MoveMemoryButton memoryId={m.id} currentIds={m.concepts.map((c) => c.id)} />
             </div>
             <div className="mt-4 flex items-center justify-between">
               <Stars value={m.importance} size="md" onChange={(n) => save.mutate({ data: { id: m.id, importance: n } })} />

@@ -28,7 +28,7 @@ async function loadOne(userId: string, id: string) {
 }
 
 /** Re-point a branch's parent synapse. Takes the caller's `sql` so it joins its transaction. */
-async function linkParent(sql: Sql, userId: string, parentId: string | null, childId: string) {
+export async function linkParent(sql: Sql, userId: string, parentId: string | null, childId: string) {
   await sql`
     delete from connections
     where user_id = ${userId}

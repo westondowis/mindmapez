@@ -7,7 +7,7 @@ import * as THREE from "three";
 // v5.23: memories anchor to their own branch id; tapping/dragging another branch no longer drags every memory onto it.
 // v5.31: scroll padding clears the fixed bottom nav and iOS safe area on every page.
 // v5.49: /api/version reports this value from the server so a publish can be checked without the UI.
-export const BRAIN_BUILD = "v5.50";
+export const BRAIN_BUILD = "v5.51";
 
 /** Resting vs hovered sector lightning: pulse = flicker speed multiplier, amp = brightness. */
 export const HOT_REST = { pulse: 1, amp: 1 } as const;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, Search, Trash2, X } from "lucide-react";
 import { GlyphRow } from "@/components/glyph-controls";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import type { Concept } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { emojiText } from "@/lib/custom-emoji";
 import { searchMoveTargets, sectorDisplay } from "@/lib/move-search";
+import { subtreeStats } from "@/lib/memory-move";
 
 export function BranchSheet({
   branch,
@@ -62,6 +63,13 @@ export function BranchSheet({
     emoji !== (branch.emoji || "🧠") ||
     color !== (branch.color || "cyan");
   const moveDirty = parentId !== branch.parentId || sectorId !== branch.sectorId;
+  const stats = useMemo(() => subtreeStats(concepts, branch.id), [concepts, branch.id]);
+  const [moveAck, setMoveAck] = useState(false);
+  const needsAck = moveDirty && stats.branches > 0;
+  // Changing the destination invalidates an earlier acknowledgement.
+  useEffect(() => {
+    setMoveAck(false);
+  }, [parentId, sectorId]);
 
   return (
     <aside className="absolute inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-border bg-background/95 shadow-soft backdrop-blur-md">
@@ -188,14 +196,39 @@ export function BranchSheet({
             </option>
           ))}
         </select>
+        {moveDirty ? (
+          <div className="mt-3 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-xs text-foreground/90">
+            {stats.branches > 0 ? (
+              <p className="font-medium">
+                This branch has {stats.branches} sub-branch{stats.branches === 1 ? "" : "es"} and {stats.memories} memor
+                {stats.memories === 1 ? "y" : "ies"} in it. Moving it relocates all of them together.
+              </p>
+            ) : null}
+            <p className="mt-1 text-muted-foreground">
+              Moving can change what connected apps and external tools can reach (anything scoped to this branch’s
+              sector or path), and it rewires this branch’s synapses.
+            </p>
+            {stats.branches > 0 ? (
+              <label className="mt-2 flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 size-4"
+                  checked={moveAck}
+                  onChange={(e) => setMoveAck(e.target.checked)}
+                />
+                <span>I understand all {stats.branches} sub-branches will move with it.</span>
+              </label>
+            ) : null}
+          </div>
+        ) : null}
         <Button
           type="button"
           className="mt-3"
           variant="secondary"
-          disabled={pending || !moveDirty}
+          disabled={pending || !moveDirty || (needsAck && !moveAck)}
           onClick={() => onMove({ parentId, sectorId })}
         >
-          Move branch
+          {stats.branches > 0 ? `Move branch and ${stats.branches} sub-branch${stats.branches === 1 ? "" : "es"}` : "Move branch"}
         </Button>
 
         <hr className="my-6 border-border" />
