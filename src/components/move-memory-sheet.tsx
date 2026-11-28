@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderTree, Plus, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { defaultSectors } from "@/lib/brain";
@@ -73,16 +74,16 @@ function MoveMemoryDialog({ memoryId, currentIds, onClose }: { memoryId: string;
 
   const row = "flex w-full min-h-11 items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-secondary";
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 sm:items-center" role="dialog" aria-label="Move memory" data-testid="memory-move-dialog">
-      <div className="flex max-h-[88dvh] w-full max-w-lg flex-col rounded-t-2xl border border-border bg-background pb-[env(safe-area-inset-bottom)] sm:rounded-2xl">
+  const dialog = (
+    <div className="fixed inset-0 z-[2000] flex items-end justify-center bg-black/60 sm:items-center" role="dialog" aria-label="Move memory" data-testid="memory-move-dialog">
+      <div className="flex max-h-[85dvh] min-h-0 w-full max-w-lg flex-col rounded-t-2xl border border-border bg-background pb-[env(safe-area-inset-bottom)] sm:rounded-2xl">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h3 className="font-display text-lg">Move memory</h3>
           <button type="button" onClick={onClose} className="flex size-11 items-center justify-center text-muted-foreground" aria-label="Close">
             <X className="size-5" />
           </button>
         </div>
-        <div className="space-y-3 overflow-y-auto px-4 py-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input className="pl-9" placeholder="Search sectors and branches…" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -196,13 +197,13 @@ function MoveMemoryDialog({ memoryId, currentIds, onClose }: { memoryId: string;
             </div>
           ) : null}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        </div>
-        <div className="border-t border-border px-4 py-3">
-          <Button type="button" className="w-full" disabled={!ready || move.isPending} onClick={() => { setError(null); move.mutate(); }} data-testid="memory-move-confirm">
+          <Button type="button" className="mb-6 w-full" disabled={!ready || move.isPending} onClick={() => { setError(null); move.mutate(); }} data-testid="memory-move-confirm">
             {move.isPending ? "Moving…" : "Move memory"}
           </Button>
+          {pick && !ready ? <p className="pb-4 text-center text-xs text-muted-foreground">{!ack ? "Tick the box above to enable the button." : creating ? "Enter a name for the new branch." : "Pick a destination branch."}</p> : null}
         </div>
       </div>
     </div>
   );
+  return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 }
